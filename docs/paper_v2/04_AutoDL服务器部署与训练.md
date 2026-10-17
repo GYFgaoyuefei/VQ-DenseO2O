@@ -4,6 +4,14 @@
 
 用户已确认正式数据、mask sidecar及预训练权重仅在AutoDL。本地候选数据检查仅作为兼容性证据；真实batch32验收以服务器有限步结果为准，当前为NOT RUN。
 
+用户已提供以下服务器资源路径，已写入`env.sh`和`env.example.sh`。这些是用户确认的路径，尚未在服务器检查文件存在性或加载权重：
+
+|变量|服务器路径|
+|---|---|
+|TOMATO_DATA_ROOT|/root/autodl-tmp/dataset/tomato_coco|
+|DINOV3_WEIGHTS|/root/autodl-tmp/pretrained/deimv2_l/dinov3_vits16_pretrain_lvd1689m-08c60483.pth|
+|TOMATO_DETECTOR_CHECKPOINT|/root/autodl-tmp/pretrained/deimv2_l/deimv2_dinov3_l_coco.pth|
+
 ## 1. 上传与环境
 
 把paper_v2.0工作区的源码、configs、tools/paper_v2、scripts/paper_v2、docs/paper_v2上传到 /root/autodl-tmp/DEIMv2-new；推荐在本地检查diff并自行提交后用Git同步该分支，避免漏传未跟踪新文件。服务器已有改动时不要reset。数据独立位于 /root/autodl-tmp/dataset/tomato_coco。
@@ -25,14 +33,14 @@ tomato_coco/
 cd /root/autodl-tmp/DEIMv2-new
 git branch --show-current
 python -c 'import torch, torchvision; print(torch.__version__, torchvision.__version__, torch.cuda.is_available())'
-cp scripts/paper_v2/autodl/env.example.sh scripts/paper_v2/autodl/env.sh
-# 编辑 env.sh，DINOV3_WEIGHTS 和 TOMATO_DETECTOR_CHECKPOINT 填真实绝对路径
+# 已提供配置好的env.sh；缺少时才从示例创建，保留服务器已有自定义配置
+test -f scripts/paper_v2/autodl/env.sh || cp scripts/paper_v2/autodl/env.example.sh scripts/paper_v2/autodl/env.sh
 source scripts/paper_v2/autodl/env.sh
 bash scripts/paper_v2/autodl/preflight.sh
 python -m pytest tests/paper_v2 -q
 ```
 
-不要照抄占位权重路径。本轮未猜测服务器实际权重文件名。原生DINO加载与detector --tuning必须对五组一致。
+五组共用上述DINO初始化和detector --tuning。mask sidecar文件名尚未确认，当前默认`annotations/visible_masks_train.json`；若服务器采用其他名称，在`env.sh`设置`TOMATO_VISIBLE_MASK_TRAIN`为实际文件。不要仅因本地存在vqcr文件就假定服务器也使用该文件。
 
 ## 2. 真实数据烟雾测试与正式训练
 

@@ -55,6 +55,7 @@ scripts/paper_v2/autodl/_common.sh
 scripts/paper_v2/autodl/benchmark_all.sh
 scripts/paper_v2/autodl/benchmark_one.sh
 scripts/paper_v2/autodl/env.example.sh
+scripts/paper_v2/autodl/env.sh
 scripts/paper_v2/autodl/evaluate_test_one.sh
 scripts/paper_v2/autodl/preflight.sh
 scripts/paper_v2/autodl/smoke_one.sh
