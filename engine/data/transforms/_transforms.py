@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from .._misc import convert_to_tv_tensor, _boxes_keys
 from .._misc import Image, Video, Mask, BoundingBoxes
-from .._misc import SanitizeBoundingBoxes
+from .._misc import SanitizeBoundingBoxes as _NativeSanitizeBoundingBoxes
 
 from ...core import register
 torchvision.disable_beta_transforms_warning()
@@ -30,9 +30,41 @@ Resize = register()(T.Resize)
 # ToImageTensor = register()(T.ToImageTensor)
 # ConvertDtype = register()(T.ConvertDtype)
 # PILToTensor = register()(T.PILToTensor)
-SanitizeBoundingBoxes = register(name='SanitizeBoundingBoxes')(SanitizeBoundingBoxes)
 RandomCrop = register()(T.RandomCrop)
 Normalize = register()(T.Normalize)
+
+
+@register()
+class SanitizeBoundingBoxes(_NativeSanitizeBoundingBoxes):
+    """Native bbox validity policy with all instance tensors filtered together.
+
+    A zero/invalid mask never determines whether its legal bbox survives.
+    """
+    def __init__(self, min_size=1.0, min_area=1.0):
+        import inspect
+        kwargs = dict(min_size=min_size, labels_getter=self._instance_labels)
+        if 'min_area' in inspect.signature(_NativeSanitizeBoundingBoxes).parameters:
+            kwargs['min_area'] = min_area
+        super().__init__(**kwargs)
+
+    @staticmethod
+    def _instance_labels(inputs):
+        from ..visible_geometry import instance_fields
+        target = inputs if isinstance(inputs, dict) else inputs[1]
+        return tuple(target[k] for k in instance_fields(target) if k not in ('boxes', 'masks'))
+
+
+@register()
+class SanitizeVisibleBoundingBoxes(SanitizeBoundingBoxes):
+    """Mask-aware assertion after the shared native bbox filtering predicate."""
+
+    def forward(self, *inputs):
+        from ..visible_geometry import assert_visible_alignment
+        result = super().forward(*inputs)
+        target = result if isinstance(result, dict) else result[1]
+        if 'masks' in target:
+            assert_visible_alignment(target, *target['masks'].shape[-2:])
+        return result
 
 
 @register()
@@ -55,7 +87,8 @@ class PadToSize(T.Pad):
         BoundingBoxes,
     )
     def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
-        sp = F.get_spatial_size(flat_inputs[0])
+        get_size = F.get_size if hasattr(F, 'get_size') else F.get_spatial_size
+        sp = get_size(flat_inputs[0])
         h, w = self.size[1] - sp[0], self.size[0] - sp[1]
         self.padding = [0, 0, w, h]
         return dict(padding=self.padding)
@@ -67,9 +100,21 @@ class PadToSize(T.Pad):
         super().__init__(0, fill, padding_mode)
 
     def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
-        fill = self._fill[type(inpt)]
+        # Older torchvision stores a defaultdict; newer versions store a
+        # literal "others" fallback. Both must support ordinary PIL images.
+        try:
+            fill = self._fill[type(inpt)]
+        except KeyError:
+            fill = self._fill.get('others', 0)
+        if isinstance(inpt, Mask):
+            # Padding has no instance support, regardless of the RGB fill.
+            fill = 0
         padding = params['padding']
         return F.pad(inpt, padding=padding, fill=fill, padding_mode=self.padding_mode)  # type: ignore[arg-type]
+
+    # torchvision >=0.22 renamed these extension hooks; retain legacy aliases.
+    make_params = _get_params
+    transform = _transform
 
     def __call__(self, *inputs: Any) -> Any:
         outputs = super().forward(*inputs)
@@ -113,6 +158,8 @@ class ConvertBoxes(T.Transform):
 
         return inpt
 
+    transform = _transform
+
 
 @register()
 class ConvertPILImage(T.Transform):
@@ -135,3 +182,5 @@ class ConvertPILImage(T.Transform):
         inpt = Image(inpt)
 
         return inpt
+
+    transform = _transform

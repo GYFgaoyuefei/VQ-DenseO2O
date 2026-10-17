@@ -13,6 +13,7 @@ from ._transforms import (
     Resize,
     PadToSize,
     SanitizeBoundingBoxes,
+    SanitizeVisibleBoundingBoxes,
     RandomCrop,
     Normalize,
     ConvertBoxes,

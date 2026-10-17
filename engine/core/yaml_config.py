@@ -14,6 +14,7 @@ import copy
 from ._config import BaseConfig
 from .workspace import create
 from .yaml_utils import load_config, merge_config, merge_dict
+from .innovation_config import resolve_innovation
 
 class YAMLConfig(BaseConfig):
     def __init__(self, cfg_path: str, **kwargs) -> None:
@@ -21,6 +22,7 @@ class YAMLConfig(BaseConfig):
 
         cfg = load_config(cfg_path)
         cfg = merge_dict(cfg, kwargs)
+        cfg = resolve_innovation(cfg)
 
         self.yaml_cfg = copy.deepcopy(cfg)
 

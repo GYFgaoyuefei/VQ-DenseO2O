@@ -29,7 +29,7 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     __inject__ = ['transforms', ]
     __share__ = ['remap_mscoco_category']
 
-    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False):
+    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False, category_ids=None):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
@@ -37,6 +37,15 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
         self.ann_file = ann_file
         self.return_masks = return_masks
         self.remap_mscoco_category = remap_mscoco_category
+        self.category_ids = category_ids
+        self.category2label_map = None
+        if category_ids is not None:
+            if remap_mscoco_category:
+                raise ValueError('category_ids and remap_mscoco_category are mutually exclusive')
+            actual = {int(c['id']) for c in self.coco.dataset['categories']}
+            if len(set(category_ids)) != len(category_ids) or set(category_ids) != actual:
+                raise ValueError(f'category_ids {category_ids} do not match COCO categories {sorted(actual)}')
+            self.category2label_map = {int(c): i for i, c in enumerate(category_ids)}
 
     def __getitem__(self, idx):
         img, target = self.load_item(idx)
@@ -51,6 +60,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
         if self.remap_mscoco_category:
             image, target = self.prepare(image, target, category2label=mscoco_category2label)
+        elif self.category2label_map is not None:
+            image, target = self.prepare(image, target, category2label=self.category2label_map)
         else:
             image, target = self.prepare(image, target)
 
@@ -83,10 +94,14 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
     @property
     def category2label(self, ):
+        if self.category2label_map is not None:
+            return dict(self.category2label_map)
         return {cat['id']: i for i, cat in enumerate(self.categories)}
 
     @property
     def label2category(self, ):
+        if self.category2label_map is not None:
+            return {v: k for k, v in self.category2label_map.items()}
         return {i: cat['id'] for i, cat in enumerate(self.categories)}
 
 

@@ -42,6 +42,7 @@ class ModelEMA(object):
         self.before_start = 0
         self.start = start
         self.updates = 0  # number of EMA updates
+        self.dynamic_decay = False  # Paper v2 explicitly enables effective stage decay.
         if warmups == 0:
             self.decay_fn = lambda x: decay
         else:
@@ -58,7 +59,8 @@ class ModelEMA(object):
         # Update EMA parameters
         with torch.no_grad():
             self.updates += 1
-            d = self.decay_fn(self.updates)
+            d = (self.decay * (1 - math.exp(-self.updates / self.warmups))
+                 if self.warmups else self.decay) if self.dynamic_decay else self.decay_fn(self.updates)
             msd = dist_utils.de_parallel(model).state_dict()
             for k, v in self.module.state_dict().items():
                 if v.dtype.is_floating_point:
@@ -70,12 +72,28 @@ class ModelEMA(object):
         return self
 
     def state_dict(self, ):
-        return dict(module=self.module.state_dict(), updates=self.updates)
+        state = dict(module=self.module.state_dict(), updates=self.updates)
+        if self.dynamic_decay:
+            state.update(dynamic_decay=True, decay=self.decay, warmups=self.warmups,
+                         start=self.start, before_start=self.before_start)
+        return state
+
+    def set_decay(self, decay):
+        """Enable effective stage decay without changing legacy EMA defaults."""
+        if not math.isfinite(decay) or not 0 <= decay <= 1:
+            raise ValueError('EMA decay must be finite and in [0,1]')
+        self.decay = float(decay)
+        self.dynamic_decay = True
 
     def load_state_dict(self, state, strict=True):
         self.module.load_state_dict(state['module'], strict=strict)
         if 'updates' in state:
             self.updates = state['updates']
+        if state.get('dynamic_decay', False):
+            self.set_decay(state['decay'])
+            self.warmups = state['warmups']
+            self.start = state['start']
+            self.before_start = state['before_start']
 
     def forwad(self, ):
         raise RuntimeError('ema...')

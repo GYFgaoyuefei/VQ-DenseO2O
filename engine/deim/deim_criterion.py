@@ -252,7 +252,8 @@ class DEIMCriterion(nn.Module):
         self.own_targets, self.own_targets_dn = None, None
         self.num_pos, self.num_neg = None, None
 
-    def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
+    def get_loss(self, loss, outputs, targets, indices, num_boxes, supervision_branch=None, **kwargs):
+        # Branch metadata is consumed here; native losses and matching are unchanged.
         loss_map = {
             'boxes': self.loss_boxes,
             'focal': self.loss_labels_focal,
@@ -314,7 +315,7 @@ class DEIMCriterion(nn.Module):
             indices_in = indices_go if use_uni_set else indices
             num_boxes_in = num_boxes_go if use_uni_set else num_boxes
             meta = self.get_loss_meta_info(loss, outputs, targets, indices_in)
-            l_dict = self.get_loss(loss, outputs, targets, indices_in, num_boxes_in, **meta)
+            l_dict = self.get_loss(loss, outputs, targets, indices_in, num_boxes_in, supervision_branch='main', **meta)
             l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
             losses.update(l_dict)
 
@@ -328,7 +329,7 @@ class DEIMCriterion(nn.Module):
                     indices_in = indices_go if use_uni_set else cached_indices[i]
                     num_boxes_in = num_boxes_go if use_uni_set else num_boxes
                     meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_in)
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_in, num_boxes_in, **meta)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_in, num_boxes_in, supervision_branch='aux', **meta)
 
                     l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
                     l_dict = {k + f'_aux_{i}': v for k, v in l_dict.items()}
@@ -342,7 +343,7 @@ class DEIMCriterion(nn.Module):
                 indices_in = indices_go if use_uni_set else cached_indices[-1]
                 num_boxes_in = num_boxes_go if use_uni_set else num_boxes
                 meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_in)
-                l_dict = self.get_loss(loss, aux_outputs, targets, indices_in, num_boxes_in, **meta)
+                l_dict = self.get_loss(loss, aux_outputs, targets, indices_in, num_boxes_in, supervision_branch='pre', **meta)
 
                 l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
                 l_dict = {k + '_pre': v for k, v in l_dict.items()}
@@ -367,7 +368,7 @@ class DEIMCriterion(nn.Module):
                     indices_in = indices_go if use_uni_set else cached_indices_enc[i]
                     num_boxes_in = num_boxes_go if use_uni_set else num_boxes
                     meta = self.get_loss_meta_info(loss, aux_outputs, enc_targets, indices_in)
-                    l_dict = self.get_loss(loss, aux_outputs, enc_targets, indices_in, num_boxes_in, **meta)
+                    l_dict = self.get_loss(loss, aux_outputs, enc_targets, indices_in, num_boxes_in, supervision_branch='encoder', **meta)
                     l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
                     l_dict = {k + f'_enc_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
@@ -387,7 +388,7 @@ class DEIMCriterion(nn.Module):
                     aux_outputs['up'], aux_outputs['reg_scale'] = outputs['up'], outputs['reg_scale']
                 for loss in self.losses:
                     meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_dn)
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_dn, dn_num_boxes, **meta)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_dn, dn_num_boxes, supervision_branch='dn', **meta)
                     l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
                     l_dict = {k + f'_dn_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
@@ -397,7 +398,7 @@ class DEIMCriterion(nn.Module):
                 aux_outputs = outputs['dn_pre_outputs']
                 for loss in self.losses:
                     meta = self.get_loss_meta_info(loss, aux_outputs, targets, indices_dn)
-                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_dn, dn_num_boxes, **meta)
+                    l_dict = self.get_loss(loss, aux_outputs, targets, indices_dn, dn_num_boxes, supervision_branch='dn_pre', **meta)
                     l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
                     l_dict = {k + '_dn_pre': v for k, v in l_dict.items()}
                     losses.update(l_dict)

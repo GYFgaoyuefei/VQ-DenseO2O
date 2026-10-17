@@ -33,7 +33,13 @@ class LinearKMaskedBias(nn.Linear):
         o = self.out_features
         assert o % 3 == 0
         if self.bias is not None:
-            self.register_buffer("bias_mask", torch.full_like(self.bias, fill_value=math.nan))
+            # Scratch/synthetic construction must be usable before a checkpoint
+            # is loaded. Preserve Q/V bias and mask only the middle K slice.
+            # The persistent key is unchanged, so pretrained loading still
+            # replaces this buffer with the checkpoint's original mask.
+            bias_mask = torch.ones_like(self.bias)
+            bias_mask[o // 3:2 * o // 3] = 0
+            self.register_buffer("bias_mask", bias_mask)
 
     def forward(self, input: Tensor) -> Tensor:
         masked_bias = self.bias * self.bias_mask.to(self.bias.dtype) if self.bias is not None else None

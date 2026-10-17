@@ -47,11 +47,22 @@ def main(args, ) -> None:
         if 'HGNetv2' in cfg.yaml_cfg:
             cfg.yaml_cfg['HGNetv2']['pretrained'] = False
 
+    if args.resume and cfg.yaml_cfg.get('paper_v2') and 'DINOv3STAs' in cfg.yaml_cfg:
+        # A full resume restores the backbone from the run checkpoint. Keep the
+        # saved config's provenance, but do not reopen the initialization file.
+        cfg.yaml_cfg['DINOv3STAs']['weights_path'] = None
+
     print('cfg: ', cfg.__dict__)
 
     solver = TASKS[cfg.yaml_cfg['task']](cfg)
 
-    if args.test_only:
+    smoke_steps = getattr(args, 'train_smoke_steps', None)
+    if smoke_steps is not None:
+        if args.test_only or args.resume:
+            raise ValueError('Bounded Train smoke cannot be combined with Test or resume')
+        from tools.paper_v2.train_smoke import run_bounded_train
+        run_bounded_train(solver, steps=smoke_steps, epoch=args.train_smoke_epoch)
+    elif args.test_only:
         solver.val()
     else:
         solver.fit()
@@ -73,6 +84,10 @@ if __name__ == '__main__':
     parser.add_argument('--output-dir', type=str, help='output directoy')
     parser.add_argument('--summary-dir', type=str, help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)
+    parser.add_argument('--train-smoke-steps', type=int, default=None,
+                        help='Paper v2 only: run 1-10 Train batches, without validation/checkpointing')
+    parser.add_argument('--train-smoke-epoch', type=int, default=0,
+                        help='Recipe augmentation/scheduler epoch for bounded Train smoke')
 
     # priority 1
     parser.add_argument('-u', '--update', nargs='+', help='update yaml config')

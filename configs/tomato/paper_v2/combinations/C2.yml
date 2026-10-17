@@ -1,0 +1,8 @@
+__include__:
+- ../common.yml
+innovation:
+  instance_mask_sync: true
+  gr_vq:
+    enabled: true
+  dc_sta:
+    enabled: true

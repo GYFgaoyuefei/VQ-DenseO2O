@@ -9,6 +9,7 @@ Copyright (c) 2024 D-FINE authors. All Rights Reserved.
 import time
 import json
 import datetime
+import copy
 
 import torch
 
@@ -17,13 +18,38 @@ from ..misc import dist_utils, stats
 from ._solver import BaseSolver
 from .det_engine import train_one_epoch, evaluate
 from ..optim.lr_scheduler import FlatCosineLRScheduler
+from .paper_v2_tracking import read_selection, is_better, record_validation
 
 
 class DetSolver(BaseSolver):
 
+    def state_dict(self):
+        state = super().state_dict()
+        if self.cfg.yaml_cfg.get('paper_v2'):
+            state['paper_v2_stage_state'] = copy.deepcopy(getattr(self, 'paper_v2_stage_state', {}))
+        return state
+
+    def load_state_dict(self, state):
+        super().load_state_dict(state)
+        if self.cfg.yaml_cfg.get('paper_v2'):
+            self.paper_v2_stage_state = copy.deepcopy(state.get('paper_v2_stage_state', {}))
+
+    def _restart_paper_stage_one(self, decay):
+        """Restore native stage-one weights/optimizer while preserving loop policy."""
+        stage_state = copy.deepcopy(getattr(self, 'paper_v2_stage_state', {}))
+        self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+        self.paper_v2_stage_state = stage_state
+        self.ema.set_decay(decay)
+
     def fit(self, ):
         self.train()
         args = self.cfg
+        paper_v2 = bool(args.yaml_cfg.get('paper_v2'))
+        if paper_v2 and self.ema is None:
+            raise ValueError('Paper v2 selection requires EMA')
+        if paper_v2:
+            self.ema.set_decay(self.ema.decay)
+        selection = read_selection(self.output_dir) if paper_v2 else None
 
         n_parameters, model_stats = stats(self.cfg)
         print(model_stats)
@@ -46,10 +72,11 @@ class DetSolver(BaseSolver):
         n_parameters = sum([p.numel() for p in self.model.parameters() if not p.requires_grad])
         print(f'number of non-trainable parameters: {n_parameters}')
 
-        top1 = 0
-        best_stat = {'epoch': -1, }
+        stage_state = getattr(self, 'paper_v2_stage_state', {}) if paper_v2 else {}
+        top1 = stage_state.get('top1', 0)
+        best_stat = copy.deepcopy(stage_state.get('best_stat', {'epoch': -1}))
         # evaluate again before resume training
-        if self.last_epoch > 0:
+        if self.last_epoch > 0 and not stage_state:
             module = self.ema.module if self.ema else self.model
             test_stats, coco_evaluator = evaluate(
                 module,
@@ -57,7 +84,7 @@ class DetSolver(BaseSolver):
                 self.postprocessor,
                 self.val_dataloader,
                 self.evaluator,
-                self.device
+                self.device, fp32=paper_v2
             )
             for k in test_stats:
                 best_stat['epoch'] = self.last_epoch
@@ -65,7 +92,12 @@ class DetSolver(BaseSolver):
                 top1 = test_stats[k][0]
                 print(f'best_stat: {best_stat}')
 
-        best_stat_print = best_stat.copy()
+        best_stat_print = copy.deepcopy(stage_state.get('best_stat_print', best_stat))
+
+        def remember_stage():
+            if paper_v2:
+                self.paper_v2_stage_state = {'top1': top1, 'best_stat': copy.deepcopy(best_stat),
+                                             'best_stat_print': copy.deepcopy(best_stat_print)}
         start_time = time.time()
         start_epoch = self.last_epoch + 1
         for epoch in range(start_epoch, args.epoches):
@@ -78,8 +110,11 @@ class DetSolver(BaseSolver):
             if epoch == self.train_dataloader.collate_fn.stop_epoch:
                 if dist_utils.is_dist_available_and_initialized():
                     torch.distributed.barrier()
-                self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
-                self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
+                if paper_v2:
+                    self._restart_paper_stage_one(self.train_dataloader.collate_fn.ema_restart_decay)
+                else:
+                    self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+                    self.ema.decay = self.train_dataloader.collate_fn.ema_restart_decay
                 print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
             train_stats = train_one_epoch(
@@ -103,9 +138,10 @@ class DetSolver(BaseSolver):
                 if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():
                     self.lr_scheduler.step()
 
-            self.last_epoch += 1
+            # Native stage reloads restore checkpoint epoch; the loop owns progress.
+            self.last_epoch = epoch if paper_v2 else self.last_epoch + 1
 
-            if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
+            if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch and not paper_v2:
                 checkpoint_paths = [self.output_dir / 'last.pth']
                 # extra checkpoint before LR drop and every 100 epochs
                 if (epoch + 1) % args.checkpoint_freq == 0:
@@ -120,8 +156,18 @@ class DetSolver(BaseSolver):
                 self.postprocessor,
                 self.val_dataloader,
                 self.evaluator,
-                self.device
+                self.device, fp32=paper_v2
             )
+
+            paper_best_pending = False
+            paper_restart_decay = None
+            if paper_v2:
+                ap = float(test_stats['coco_eval_bbox'][0])
+                if is_better(ap, selection):
+                    selection = {'ap': ap, 'epoch': epoch, 'model': 'ema',
+                                 'split': 'mixed_validation', 'tie_rule': 'earliest_epoch',
+                                 'precision': 'FP32', 'autocast': False, 'tf32': False}
+                    paper_best_pending = True
 
             for k in test_stats:
                 if self.writer and dist_utils.is_main_process():
@@ -139,6 +185,7 @@ class DetSolver(BaseSolver):
                     best_stat_print['epoch'] = epoch
                     top1 = best_stat[k]
                     if self.output_dir:
+                        remember_stage()
                         if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                             dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best_stg2.pth')
                         else:
@@ -148,6 +195,7 @@ class DetSolver(BaseSolver):
                 print(f'best_stat: {best_stat_print}')  # global best
 
                 if best_stat['epoch'] == epoch and self.output_dir:
+                    remember_stage()
                     if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                         if test_stats[k][0] > top1:
                             top1 = test_stats[k][0]
@@ -158,10 +206,29 @@ class DetSolver(BaseSolver):
 
                 elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
                     best_stat = {'epoch': -1, }
-                    self.ema.decay -= 0.0001
-                    self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
-                    print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
+                    if paper_v2:
+                        paper_restart_decay = self.ema.decay - 0.0001
+                    else:
+                        self.ema.decay -= 0.0001
+                        self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
+                        print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
 
+
+            if paper_v2:
+                remember_stage()
+                # Capture the evaluated EMA before any native stage rollback.
+                if paper_best_pending:
+                    dist_utils.save_on_master(self.state_dict(), self.output_dir / 'best.pth')
+                if dist_utils.is_main_process():
+                    record_validation(self.output_dir, epoch, test_stats['coco_eval_bbox'], selection)
+                if paper_restart_decay is not None:
+                    self._restart_paper_stage_one(paper_restart_decay)
+                    print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
+                # Native stage reloads restore checkpoint epoch; the loop owns progress.
+                self.last_epoch = epoch
+                dist_utils.save_on_master(self.state_dict(), self.output_dir / 'last.pth')
+                if (epoch + 1) % args.checkpoint_freq == 0:
+                    dist_utils.save_on_master(self.state_dict(), self.output_dir / f'checkpoint{epoch:04}.pth')
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
@@ -195,9 +262,12 @@ class DetSolver(BaseSolver):
 
         module = self.ema.module if self.ema else self.model
         test_stats, coco_evaluator = evaluate(module, self.criterion, self.postprocessor,
-                self.val_dataloader, self.evaluator, self.device)
+                self.val_dataloader, self.evaluator, self.device,
+                fp32=bool(self.cfg.yaml_cfg.get('paper_v2')))
 
         if self.output_dir:
             dist_utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval.pth")
+            if dist_utils.is_main_process():
+                (self.output_dir / 'metrics.json').write_text(json.dumps(test_stats, indent=2), encoding='utf-8')
 
         return

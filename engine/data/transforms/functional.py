@@ -4,6 +4,7 @@ import torchvision.transforms.functional as F
 from packaging import version
 from typing import Optional, List
 from torch import Tensor
+from ..visible_geometry import filter_instances, assert_visible_alignment
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
@@ -69,8 +70,9 @@ def crop(image, target, region):
         else:
             keep = target['masks'].flatten(1).any(1)
 
-        for field in fields:
-            target[field] = target[field][keep]
+        filter_instances(target, keep)
+        if 'masks' in target:
+            assert_visible_alignment(target, h, w)
 
     return cropped_image, target
 

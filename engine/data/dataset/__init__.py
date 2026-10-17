@@ -5,6 +5,7 @@ Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 
 # from ._dataset import DetDataset
 from .coco_dataset import CocoDetection
+from .visible_coco_dataset import VisibleMaskCocoDetection
 from .coco_dataset import (
     mscoco_category2name,
     mscoco_category2label,

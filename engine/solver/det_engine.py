@@ -9,6 +9,7 @@ Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 
 import sys
 import math
+from contextlib import contextmanager
 from typing import Iterable
 
 import torch
@@ -18,6 +19,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 
 from ..optim import ModelEMA, Warmup
 from ..data import CocoEvaluator
+from ..data.li_copyblend import STAT_NAMES, summarize_copyblend_stats
 from ..misc import MetricLogger, SmoothedValue, dist_utils
 
 
@@ -36,20 +38,28 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
     ema :ModelEMA = kwargs.get('ema', None)
     scaler :GradScaler = kwargs.get('scaler', None)
     lr_warmup_scheduler :Warmup = kwargs.get('lr_warmup_scheduler', None)
+    step_observer = kwargs.get('step_observer')
 
     cur_iters = epoch * len(data_loader)
+    copyblend_totals = torch.zeros(len(STAT_NAMES) + 1, dtype=torch.float64, device=device)
+    if hasattr(criterion, 'diagnostic_summary'):
+        criterion.diagnostic_summary(reset=True)
 
     for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        if step_observer is not None:
+            step_observer.begin_step(i)
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         global_step = epoch * len(data_loader) + i
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
         if scaler is not None:
-            with torch.autocast(device_type=str(device), cache_enabled=True):
+            with torch.autocast(device_type=torch.device(device).type, cache_enabled=True):
                 outputs = model(samples, targets=targets)
 
             if torch.isnan(outputs['pred_boxes']).any() or torch.isinf(outputs['pred_boxes']).any():
+                if step_observer is not None:
+                    raise RuntimeError('Train smoke produced nonfinite boxes; no checkpoint saved')
                 print(outputs['pred_boxes'])
                 state = model.state_dict()
                 new_state = {}
@@ -61,14 +71,17 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 new_state['model'] = state
                 dist_utils.save_on_master(new_state, "./NaN.pth")
 
-            with torch.autocast(device_type=str(device), enabled=False):
+            with torch.autocast(device_type=torch.device(device).type, enabled=False):
                 loss_dict = criterion(outputs, targets, **metas)
 
             loss = sum(loss_dict.values())
             scaler.scale(loss).backward()
 
-            if max_norm > 0:
+            if max_norm > 0 or step_observer is not None:
                 scaler.unscale_(optimizer)
+            if step_observer is not None:
+                step_observer.observe_gradients(model, optimizer, ema)
+            if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
             scaler.step(optimizer)
@@ -83,6 +96,8 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             optimizer.zero_grad()
             loss.backward()
 
+            if step_observer is not None:
+                step_observer.observe_gradients(model, optimizer, ema)
             if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
@@ -98,6 +113,9 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
             if lr_warmup_scheduler is not None:
                 lr_warmup_scheduler.step()
 
+        if step_observer is not None:
+            step_observer.end_step(samples, targets, loss_dict, optimizer)
+
         loss_dict_reduced = dist_utils.reduce_dict(loss_dict)
         loss_value = sum(loss_dict_reduced.values())
 
@@ -108,6 +126,9 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
         metric_logger.update(loss=loss_value, **loss_dict_reduced)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        if targets and 'li_copyblend_stats' in targets[0]:
+            copyblend_totals[:-1] += targets[0]['li_copyblend_stats'].detach().double()
+            copyblend_totals[-1] += 1
 
         if writer and dist_utils.is_main_process() and global_step % 10 == 0:
             writer.add_scalar('Loss/total', loss_value.item(), global_step)
@@ -119,11 +140,60 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    result = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    if dist_utils.is_dist_available_and_initialized():
+        torch.distributed.all_reduce(copyblend_totals)
+    values = copyblend_totals.cpu().tolist()
+    if values[-1] > 0:
+        diagnostics = summarize_copyblend_stats(values[:-1])
+        result.update({f'copyblend_{key}': value for key, value in diagnostics.items()})
+        result['copyblend_batches'] = values[-1]
+        if diagnostics['li_enabled_image_count'] > 0:
+            result.update({f'li_{key}': value for key, value in diagnostics.items()})
+            result['li_batches'] = values[-1]
+    if hasattr(criterion, 'diagnostic_summary'):
+        diagnostics = criterion.diagnostic_summary(reset=True)
+        # Epoch boundary only. Criterion exposes detached compact aggregates.
+        for branch, values in diagnostics.items():
+            if isinstance(values, dict):
+                for key, value in values.items():
+                    result[f'gr_vq_{branch}_{key}'] = float(value)
+            else:
+                result[f'gr_vq_{branch}'] = float(values)
+    return result
+
+
+@contextmanager
+def fp32_evaluation(model, device, enabled):
+    """Make Paper selection FP32 explicit, including callers inside AMP scopes."""
+    if not enabled:
+        yield
+        return
+    floating = [value for value in (*model.parameters(), *model.buffers()) if value.is_floating_point()]
+    if any(value.dtype != torch.float32 for value in floating):
+        raise ValueError('Paper v2 selection requires FP32 EMA parameters and buffers')
+    matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    precision = torch.get_float32_matmul_precision()
+    try:
+        torch.set_float32_matmul_precision('highest')
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        with torch.autocast(device_type=torch.device(device).type, enabled=False):
+            yield
+    finally:
+        torch.set_float32_matmul_precision(precision)
+        torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
+        torch.backends.cudnn.allow_tf32 = cudnn_tf32
 
 
 @torch.no_grad()
-def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device):
+def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device, *, fp32=False):
+    with fp32_evaluation(model, device, fp32):
+        return _evaluate(model, criterion, postprocessor, data_loader, coco_evaluator, device)
+
+
+def _evaluate(model, criterion, postprocessor, data_loader, coco_evaluator, device):
     model.eval()
     criterion.eval()
     coco_evaluator.cleanup()

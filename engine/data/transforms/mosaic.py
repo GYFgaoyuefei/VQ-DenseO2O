@@ -9,7 +9,8 @@ import torchvision.transforms.v2.functional as F
 import random
 from PIL import Image
 
-from .._misc import convert_to_tv_tensor
+from .._misc import Mask, convert_to_tv_tensor
+from ..visible_geometry import mosaic_masks, concatenate_instances
 from ...core import register
 
 
@@ -39,7 +40,7 @@ class Mosaic(T.Transform):
         self.resize = T.Resize(size=output_size, max_size=max_size)
         self.probability = probability
         self.affine_transform = T.RandomAffine(degrees=rotation_range, translate=translation_range,
-                                               scale=scaling_range, fill=fill_value)
+                                               scale=scaling_range, fill={Mask: 0, 'others': fill_value})
         self.use_cache = use_cache
         self.mosaic_cache = []
         self.max_cached_images = max_cached_images
@@ -99,11 +100,11 @@ class Mosaic(T.Transform):
 
             merged_image.paste(img, placement_offsets[i])
             target['boxes'] = target['boxes'] + offsets[i]
+            if 'masks' in target:
+                target['masks'] = mosaic_masks(target['masks'], i, max_height, max_width)
             mosaic_target.append(target)
 
-        merged_target = {}
-        for key in mosaic_target[0]:
-            merged_target[key] = torch.cat([target[key] for target in mosaic_target])
+        merged_target = concatenate_instances(mosaic_target)
 
         return merged_image, merged_target
 
@@ -116,14 +117,14 @@ class Mosaic(T.Transform):
 
         """Merges targets into a single target dictionary for the mosaic."""
         offsets = torch.tensor([[0, 0], [max_width, 0], [0, max_height], [max_width, max_height]]).repeat(1, 2)
-        merged_target = {}
-        for key in targets[0]:
-            if key == 'boxes':
-                values = [target[key] + offsets[i] for i, target in enumerate(targets)]
-            else:
-                values = [target[key] for target in targets]
-
-            merged_target[key] = torch.cat(values, dim=0) if isinstance(values[0], torch.Tensor) else values
+        placed = []
+        for i, target in enumerate(targets):
+            target = dict(target)
+            target['boxes'] = target['boxes'] + offsets[i]
+            if 'masks' in target:
+                target['masks'] = mosaic_masks(target['masks'], i, max_height, max_width)
+            placed.append(target)
+        merged_target = concatenate_instances(placed)
 
         return merged_image, merged_target
 

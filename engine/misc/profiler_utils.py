@@ -3,12 +3,27 @@ Copyright (c) 2024 The D-FINE Authors. All Rights Reserved.
 """
 
 import copy
-from calflops import calculate_flops
 from typing import Tuple
 
 def stats(
     cfg,
     input_shape: Tuple=(1, 3, 640, 640), ) -> Tuple[int, dict]:
+
+    # Paper v2 has one dedicated deploy profiler, run after the fixed latency
+    # measurement. Do not run a second, optional calflops forward in fit(): it
+    # can fail on unsupported operators, patch torch globally, consume RNG,
+    # and would have a different scope from the publication protocol.
+    if getattr(cfg, 'yaml_cfg', {}).get('paper_v2'):
+        params = sum(p.numel() for p in cfg.model.parameters())
+        return params, {f"Full Params:{params}; FLOPs NOT RUN during training "
+                        "(use the unified Paper v2 efficiency benchmark)"}
+
+    # Profiling is optional; importing the training/test stack must not require it.
+    try:
+        from calflops import calculate_flops
+    except ImportError:
+        params = sum(p.numel() for p in cfg.model.parameters())
+        return params, {f"Params:{params}; FLOPs NOT RUN (calflops unavailable)"}
 
     base_size = cfg.train_dataloader.collate_fn.base_size
     input_shape = (1, 3, base_size, base_size)

@@ -34,13 +34,19 @@ class PostProcessor(nn.Module):
         num_classes=80,
         use_focal_loss=True,
         num_top_queries=300,
-        remap_mscoco_category=False
+        remap_mscoco_category=False,
+        category_ids=None,
     ) -> None:
         super().__init__()
         self.use_focal_loss = use_focal_loss
         self.num_top_queries = num_top_queries
         self.num_classes = int(num_classes)
         self.remap_mscoco_category = remap_mscoco_category
+        if category_ids is not None and (len(category_ids) != self.num_classes or len(set(category_ids)) != self.num_classes):
+            raise ValueError('category_ids must uniquely map each detector class')
+        if category_ids is not None and remap_mscoco_category:
+            raise ValueError('Use category_ids or remap_mscoco_category, not both')
+        self.register_buffer('category_ids', None if category_ids is None else torch.tensor(category_ids, dtype=torch.long), persistent=False)
         self.deploy_mode = False
 
     def extra_repr(self) -> str:
@@ -73,7 +79,9 @@ class PostProcessor(nn.Module):
         if self.deploy_mode:
             return labels, boxes, scores
 
-        if self.remap_mscoco_category:
+        if self.category_ids is not None:
+            labels = self.category_ids[labels]
+        elif self.remap_mscoco_category:
             from ..data.dataset import mscoco_label2category
             labels = torch.tensor([mscoco_label2category[int(x.item())] for x in labels.flatten()])\
                 .to(boxes.device).reshape(labels.shape)

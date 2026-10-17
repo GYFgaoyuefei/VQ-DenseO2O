@@ -8,6 +8,7 @@ import atexit
 
 from ..misc import dist_utils
 from ..core import BaseConfig
+from ..backbone.dc_sta import audit_dc_training, validate_dc_checkpoint
 
 
 def to(m: nn.Module, device: str):
@@ -97,6 +98,16 @@ class BaseSolver(object):
             print(f'Resume checkpoint from {self.cfg.resume}')
             self.load_resume_state(self.cfg.resume)
 
+        self.dc_sta_training_audit = audit_dc_training(self.model, self.optimizer, self.ema)
+        if self.dc_sta_training_audit['enabled']:
+            if self.dc_sta_training_audit['status'] != 'PASS':
+                raise RuntimeError(f'DC-STA training wiring failed: {self.dc_sta_training_audit}')
+            if (self.cfg.yaml_cfg.get('paper_v2') and not self.cfg.resume
+                    and not self.dc_sta_training_audit['identity_initialized']):
+                raise RuntimeError('Paper v2 DC-STA initial gates must equal 1; use shared native pretrained initialization')
+            print('DC-STA optimizer/EMA coverage: PASS '
+                  f"({self.dc_sta_training_audit['parameter_count']} gate tensors)")
+
     def eval(self):
         self._setup()
 
@@ -175,6 +186,10 @@ class BaseSolver(object):
             pretrain_state_dict = state['ema']['module']
         else:
             pretrain_state_dict = state['model']
+
+        # Check before shape matching can silently discard historical gate keys.
+        # Native pretrained detectors have no DC subtree and remain supported.
+        validate_dc_checkpoint(module, pretrain_state_dict)
 
         # Adjust head parameters between datasets
         try:

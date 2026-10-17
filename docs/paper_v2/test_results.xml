@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+    <testsuite name="pytest" errors="0" failures="0" skipped="0" tests="117" time="14.990"
+               timestamp="2026-10-17T10:31:52.054828+08:00" hostname="yuefei">
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_five_independent_configs_resolve_exact_switch_matrix[baseline_native-expected0]"
+                  time="0.026"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_five_independent_configs_resolve_exact_switch_matrix[baseline_maskaware-expected1]"
+                  time="0.026"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_five_independent_configs_resolve_exact_switch_matrix[gr_vq-expected2]" time="0.026"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_five_independent_configs_resolve_exact_switch_matrix[li_copyblend-expected3]"
+                  time="0.026"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_five_independent_configs_resolve_exact_switch_matrix[dc_sta-expected4]" time="0.026"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_yaml_load_and_resolve_do_not_contaminate_other_experiments" time="0.180"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_mask_consumers_require_independent_mask_switch[gr_vq]" time="0.025"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_mask_consumers_require_independent_mask_switch[li_copyblend]" time="0.025"/>
+        <testcase classname="tests.paper_v2.test_config_runner" name="test_dc_sta_has_no_algorithmic_mask_dependency"
+                  time="0.025"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_missing_environment_variables_fail_explicitly" time="0.050"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_combination_generator_produces_four_parseable_configs" time="0.134"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_real_model_and_criterion_construct_from_each_config_without_weights[baseline_native]"
+                  time="0.223"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_real_model_and_criterion_construct_from_each_config_without_weights[baseline_maskaware]"
+                  time="0.206"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_real_model_and_criterion_construct_from_each_config_without_weights[gr_vq]" time="0.334"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_real_model_and_criterion_construct_from_each_config_without_weights[li_copyblend]"
+                  time="0.207"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_real_model_and_criterion_construct_from_each_config_without_weights[dc_sta]" time="0.221"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_combination_model_and_criterion_construct_without_weights[C1-modules0]" time="0.214"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_combination_model_and_criterion_construct_without_weights[C2-modules1]" time="0.217"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_combination_model_and_criterion_construct_without_weights[C3-modules2]" time="0.209"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_combination_model_and_criterion_construct_without_weights[C4-modules3]" time="0.212"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_postprocessor_returns_verified_coco_ids_and_keeps_deploy_class_indices" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_selection_uses_strict_improvement_and_retains_ties_after_reload" time="0.010"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_output_guard_blocks_overwrite_and_foreign_or_completed_resume" time="0.006"/>
+        <testcase classname="tests.paper_v2.test_config_runner"
+                  name="test_native_train_command_single_gpu_ddp_resume_and_test" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_data_pipeline.SharedRecipeDataPipelineTests"
+                  name="test_all_five_registered_recipes_at_four_schedule_stages" time="1.923"/>
+        <testcase classname="tests.paper_v2.test_data_pipeline.SharedRecipeDataPipelineTests"
+                  name="test_b0_b1_full_pipeline_fixed_seeds_rgb_bbox_class_equivalence" time="1.715"/>
+        <testcase classname="tests.paper_v2.test_data_pipeline.SharedRecipeDataPipelineTests"
+                  name="test_collate_constructor_does_not_delete_vis_when_disabled" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_b0_b1_same_random_geometry_rgb_bbox_and_class" time="0.006"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_cache_mosaic_matches_dataset_mosaic" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_crop_filters_all_metadata_but_not_image_fields" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_invalid_mask_does_not_remove_legal_bbox" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_mixed_instance_count_never_concatenates_image_fields" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_mosaic_spatial_masks_and_sources_align_without_fake_image_label" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DataGeometryTests"
+                  name="test_native_sanitize_has_identical_bbox_predicate_and_aligned_metadata" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_b0_has_no_masks_and_b1_preserves_detection_targets" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_explicit_source_mapping_supported" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_malformed_mask_keeps_bbox_and_marks_invalid" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_sidecar_annotation_hash_mismatch_fails" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_sidecar_annotation_identity_mismatch_fails" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_unknown_illumination_is_unknown_not_guessed_from_rgb" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_data_sync.DatasetSidecarTests"
+                  name="test_validation_split_cannot_provide_train_donor" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_identity_is_exact_at_every_scale" time="0.010"/>
+        <testcase classname="tests.paper_v2.test_dc_sta"
+                  name="test_last_layer_gradients_are_finite_and_nonzero_at_identity" time="0.495"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_tanh_range_and_formula_after_parameters_change"
+                  time="0.011"/>
+        <testcase classname="tests.paper_v2.test_dc_sta"
+                  name="test_descriptor_inverse_normalization_clamp_and_rgb_order" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_dc_sta"
+                  name="test_descriptor_finite_difference_and_custom_normalization" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_cpu_autocast_identity_and_finite_backward"
+                  time="0.006"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_configuration_is_rejected[options0]"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_configuration_is_rejected[options1]"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_configuration_is_rejected[options2]"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_configuration_is_rejected[options3]"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_configuration_is_rejected[options4]"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_invalid_scale_count_is_rejected" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_dc_sta"
+                  name="test_adapter_disabled_has_native_state_and_enabled_initial_output_is_equal" time="0.040"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_existing_pretrained_loading_is_preserved"
+                  time="0.018"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_adapter_requires_sta_and_three_scales"
+                  time="0.006"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_real_dinov3_small_input_cpu_forward_backward[False]"
+                  time="0.184"/>
+        <testcase classname="tests.paper_v2.test_dc_sta" name="test_real_dinov3_small_input_cpu_forward_backward[True]"
+                  time="0.169"/>
+        <testcase classname="tests.paper_v2.test_dc_sta"
+                  name="test_key_bias_mask_initialization_and_checkpoint_override" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_continuous_coordinates_match_independent_reference" time="0.008"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_empty_collection" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_empty_mask_falls_back"
+                  time="0.002"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_enlarged_prediction_reduces_relative_purity" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_fp32_and_cpu_amp_finite"
+                  time="0.003"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_identity_nonrectangular_mask"
+                  time="0.002"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_identity_rectangle_and_fractional_box" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_illegal_config_rejected"
+                  time="0.000"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_invalid_gt_reference_falls_back"
+                  time="0.003"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests" name="test_invalid_mask_flag_falls_back"
+                  time="0.002"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_nonbinary_and_nonfinite_masks_fall_back" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_ordinary_iou_is_zero_for_disjoint_boxes" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_outside_image_retains_full_box_area" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_partial_prediction_reduces_coverage" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_quality_bounds_all_beta_and_chunk_sizes" time="0.015"/>
+        <testcase classname="tests.paper_v2.test_gr_vq.GRVQGeometryTests"
+                  name="test_quality_detached_from_prediction_and_mask" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_beta_zero_exact_native_loss_and_gradient_all_branches" time="0.041"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_class_agnostic_encoder_preserves_mask_alignment" time="0.012"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_cpu_amp_forward_backward_finite" time="0.023"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_diagnostics_tensor_streaming_summary_and_reset" time="0.012"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_distributed_diagnostics_reduce_once_without_mutating_accumulators" time="0.012"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_dn_preserved_without_local_loss_marker" time="0.019"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_empty_targets_forward_and_backward" time="0.010"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_giou_metadata_never_becomes_gr_vq_iou" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_hungarian_matching_identical" time="0.018"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_initial_empty_diagnostics_reset_never_reduces" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_invalid_mask_fallback_equals_native_positive_target" time="0.019"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_only_ordinary_mal_changes_all_other_losses_and_dn_equal" time="0.031"/>
+        <testcase classname="tests.paper_v2.test_gr_vq_criterion.GRVQCriterionTests"
+                  name="test_positive_target_formula_negative_and_class_identity_preserved" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_b0_b1_native_copyblend_same_rgb_bbox_labels_and_random_choices" time="0.006"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_b0_b1_native_mixup_same_rgb_bbox_labels_and_random_choices" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_candidate_budget_limits_dense_pool_work" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_class_range_and_area_threshold" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_collate_multiscale_resizes_mask_binary_support" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_collision_checks_visible_mask_outside_existing_bbox" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_collision_has_bounded_retries_and_skip" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_components_can_be_ablated_independently" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_disabled_uses_native_rectangle_copyblend" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_empty_pool_returns_without_error" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_foreground_formula_and_exact_outside_preservation" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_invalid_and_empty_mask_do_not_paste" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_local_photometry_uses_background_not_fruit_color" time="0.008"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_mixed_destination_requires_local_photometry" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_mixup_preserves_all_instance_fields_and_mixed_light" time="0.002"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_new_geometry_label_area_crowd_light_ids_and_opacity" time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_normalized_rgb_statistics_and_blending_equivalence" time="0.006"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_pasted_area_tracks_multiscale_support_without_changing_native_area" time="0.004"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests"
+                  name="test_seed_reproducible_images_geometry_and_classes" time="0.005"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests" name="test_strict_mismatch_rejected"
+                  time="0.003"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests" name="test_unknown_light_donor_rejected"
+                  time="0.002"/>
+        <testcase classname="tests.paper_v2.test_li_copyblend.LICopyBlendTests" name="test_val_or_test_donor_rejected"
+                  time="0.003"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.EMAStageTests"
+                  name="test_dynamic_decay_changes_actual_averaging" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.EMAStageTests"
+                  name="test_effective_decay_and_warmup_resume_exact" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.EMAStageTests"
+                  name="test_legacy_default_and_checkpoint_shape_unchanged" time="0.001"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.SelectionResumeTests"
+                  name="test_exact_tie_retains_earliest_epoch" time="0.000"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.SelectionResumeTests"
+                  name="test_global_best_before_rollback_last_after_rollback" time="0.064"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.SelectionResumeTests"
+                  name="test_interrupted_resume_keeps_stage_decisions_and_effective_decay" time="0.120"/>
+        <testcase classname="tests.paper_v2.test_selection_resume.SelectionResumeTests"
+                  name="test_stage_reload_preserves_current_policy_and_requested_decay" time="0.032"/>
+    </testsuite>
+</testsuites>

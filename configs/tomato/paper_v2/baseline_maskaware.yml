@@ -1,0 +1,3 @@
+__include__: ['common.yml']
+innovation:
+  instance_mask_sync: true

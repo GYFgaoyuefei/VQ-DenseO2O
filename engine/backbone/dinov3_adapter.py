@@ -21,6 +21,7 @@ from functools import partial
 from ..core import register
 from .vit_tiny import VisionTransformer
 from .dinov3 import DinoVisionTransformer
+from .dc_sta import DCSTA
 
 
 class SpatialPriorModulev2(nn.Module):
@@ -83,6 +84,7 @@ class DINOv3STAs(nn.Module):
         use_sta=True,
         conv_inplane=16,
         hidden_dim=None,
+        dc_sta=None,
     ):
         super(DINOv3STAs, self).__init__()
         if 'dinov3' in name:
@@ -130,11 +132,24 @@ class DINOv3STAs(nn.Module):
             nn.SyncBatchNorm(hidden_dim)
         ])
 
+        # Opt-in details-only modulation. Disabled models keep native parameter
+        # names/state dictionaries, pretrained loading and random-number stream.
+        if dc_sta is not None and not isinstance(dc_sta, dict):
+            raise TypeError('DINOv3STAs.dc_sta must be a dictionary or None')
+        self.dc_sta = None
+        if dc_sta is not None and dc_sta.get('enabled', False):
+            if not use_sta or len(interaction_indexes) != 3:
+                raise ValueError('DC-STA requires STA and three semantic feature blocks')
+            with torch.random.fork_rng(devices=[]):
+                self.dc_sta = DCSTA([conv_inplane * 2, conv_inplane * 4, conv_inplane * 4], dc_sta)
+
     def forward(self, x):
         # Code for matching with oss
         H_c, W_c = x.shape[2] // 16, x.shape[3] // 16
         H_toks, W_toks = x.shape[2] // self.patch_size, x.shape[3] // self.patch_size
         bs, C, h, w = x.shape
+        if self.dc_sta is not None and (h % 32 or w % 32):
+            raise ValueError('DC-STA input height and width must be divisible by 32')
 
         if len(self.interaction_indexes) > 0 and not isinstance(self.dinov3, VisionTransformer):
             all_layers = self.dinov3.get_intermediate_layers(
@@ -159,6 +174,8 @@ class DINOv3STAs(nn.Module):
         fused_feats = []
         if self.use_sta:
             detail_feats = self.sta(x)
+            if self.dc_sta is not None:
+                detail_feats = self.dc_sta(x, sem_feats, detail_feats)
             for sem_feat, detail_feat in zip(sem_feats, detail_feats):
                 fused_feats.append(torch.cat([sem_feat, detail_feat], dim=1))
         else:

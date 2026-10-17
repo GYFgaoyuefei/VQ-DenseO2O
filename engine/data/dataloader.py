@@ -23,7 +23,10 @@ torchvision.disable_beta_transforms_warning()
 from copy import deepcopy
 from PIL import Image, ImageDraw
 import os
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
+from .visible_geometry import (concatenate_instances, translated_record, append_records,
+                               resize_masks, assert_visible_alignment)
+from .li_copyblend import LICopyBlend
 
 
 __all__ = [
@@ -112,7 +115,8 @@ class BatchImageCollateFunction(BaseCollateFunction):
         expand_ratios=[0.1, 0.25],
         random_num_objects=False,
         data_vis=False,
-        vis_save='./vis_dataset/'
+        vis_save='./vis_dataset/',
+        li_copyblend=None,
     ) -> None:
         super().__init__()
         self.base_size = base_size
@@ -126,9 +130,10 @@ class BatchImageCollateFunction(BaseCollateFunction):
         self.data_vis, self.vis_save = data_vis, vis_save
         self.with_expand, self.expand_ratios, self.random_num_objects = with_expand, expand_ratios, random_num_objects
         self.conflict_with_mixup = conflict_with_mixup  # 是否冲突
+        self.li_copyblend = LICopyBlend(**(li_copyblend or {}))
 
         if self.mixup_prob > 0 or self.copyblend_prob > 0:
-            if os.path.isdir(self.vis_save):
+            if self.data_vis and os.path.isdir(self.vis_save):
                 for file in os.listdir(self.vis_save):
                     os.remove('{}/{}'.format(self.vis_save, file))
             os.makedirs(self.vis_save, exist_ok=True) if self.data_vis else None
@@ -167,6 +172,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
             self.print_info_flag = False
 
         MixUp_flag, CopyBlend_flag = False, False
+        copyblend_stats = Counter()
         beta = round(random.uniform(0.45, 0.55), 6)
         # Apply Mixup if within specified epoch range and probability threshold
         if random.random() < self.mixup_prob and self.mixup_epochs[0] <= self.epoch < self.mixup_epochs[-1]:
@@ -183,9 +189,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
             for i in range(len(targets)):
                 # Combine boxes, labels, and areas from original and shifted targets
-                updated_targets[i]['boxes'] = torch.cat([targets[i]['boxes'], shifted_targets[i]['boxes']], dim=0)
-                updated_targets[i]['labels'] = torch.cat([targets[i]['labels'], shifted_targets[i]['labels']], dim=0)
-                updated_targets[i]['area'] = torch.cat([targets[i]['area'], shifted_targets[i]['area']], dim=0)
+                updated_targets[i] = concatenate_instances([targets[i], shifted_targets[i]])
 
                 # Add mixup ratio to targets
                 updated_targets[i]['mixup'] = torch.tensor(
@@ -200,6 +204,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 self.print_copyblend_flag = False
 
             CopyBlend_flag = True
+            if self.li_copyblend.enabled:
+                return self.li_copyblend(images, targets, alpha=(1.0-beta) if self.copyblend_type == 'blend' else 1.0,
+                    area_threshold=self.area_threshold, num_objects=self.num_objects,
+                    random_num_objects=self.random_num_objects, with_expand=self.with_expand,
+                    expand_ratios=self.expand_ratios)
             objects_pool = defaultdict(list)
             img_height, img_width = images[0].shape[-2:]
 
@@ -216,12 +225,13 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     objects_pool['labels'].append(source_labels[idx])
                     objects_pool['areas'].append(source_areas[idx])
                     objects_pool['image_idx'].append(i)
+                    objects_pool['instance_idx'].append(idx)
                     objects_pool['image_height'].append(img_height)
                     objects_pool['image_width'].append(img_width)
             
             # check if objects_pool is empty
             if len(objects_pool['boxes']) == 0:
-                return images, targets
+                return self.li_copyblend.record_stats(images, targets, copyblend_stats)
             
             # convert list to tensor for convenient operation
             for key in ['boxes', 'labels', 'areas']:
@@ -246,13 +256,16 @@ class BatchImageCollateFunction(BaseCollateFunction):
                 blend_labels = []
                 blend_areas = []
                 blend_mixup_ratios = []
+                blend_records = []
 
                 for idx in selected_indices:
+                    copyblend_stats['attempted_pastes'] += 1
                     # get source object information
                     box = objects_pool['boxes'][idx]
                     label = objects_pool['labels'][idx]
                     area = objects_pool['areas'][idx]
                     source_idx = objects_pool['image_idx'][idx]
+                    source_instance = objects_pool['instance_idx'][idx]
                     source_height = objects_pool['image_height'][idx]
                     source_width = objects_pool['image_width'][idx]
                     
@@ -307,6 +320,19 @@ class BatchImageCollateFunction(BaseCollateFunction):
                         updated_images[i, :, y1:y2, x1:x2] = blended_patch
                     else:
                         updated_images[i, :, y1:y2, x1:x2] = copy_patch_orig
+
+                    # Propagate optional metadata without changing native RGB, box,
+                    # class, sampling, expansion, or opacity behavior.
+                    if self.copyblend_type != 'blend' and 'masks' in updated_targets[i]:
+                        updated_targets[i]['masks'][:, y1:y2, x1:x2] = 0
+                        for record in blend_records:
+                            record['masks'][:, y1:y2, x1:x2] = 0
+                    record = translated_record(targets[source_idx], source_instance,
+                        (x1_src, y1_src, x2_src, y2_src), (x1, y1, x2, y2), (img_height, img_width))
+                    if 'blend_opacity' in record:
+                        record['blend_opacity'].fill_((1-beta) if self.copyblend_type == 'blend' else 1.0)
+                    blend_records.append(record)
+                    copyblend_stats['accepted_pastes'] += 1
                     
                 # add blended objects to targets
                 if len(blend_boxes) > 0:
@@ -323,6 +349,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
                     updated_targets[i]['boxes'] = torch.cat([updated_targets[i]['boxes'], blend_boxes])
                     updated_targets[i]['labels'] = torch.cat([updated_targets[i]['labels'], blend_labels])
                     updated_targets[i]['area'] = torch.cat([updated_targets[i]['area'], blend_areas])
+                    append_records(updated_targets[i], blend_records)
+                    if 'image_illumination_id' in updated_targets[i]:
+                        updated_targets[i]['image_illumination_id'].fill_(-1)
+                    if 'masks' in updated_targets[i]:
+                        assert_visible_alignment(updated_targets[i], img_height, img_width)
 
             images, targets = updated_images, updated_targets
 
@@ -342,7 +373,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
                                         int(box[0]*640 + (box[2]*640)/2), int(box[1]*640 + (box[3]*640)/2)], outline=(255,255,0))
                     pilImage.save(self.vis_save + str(i) + "_"+ str(len(updated_targets[i]['boxes'])) +'_out.jpg')
 
-        return images, targets
+        return self.li_copyblend.record_stats(images, targets, copyblend_stats)
 
     def __call__(self, items):
         images = torch.cat([x[0][None] for x in items], dim=0)
@@ -360,7 +391,9 @@ class BatchImageCollateFunction(BaseCollateFunction):
             images = F.interpolate(images, size=sz)
             if 'masks' in targets[0]:
                 for tg in targets:
-                    tg['masks'] = F.interpolate(tg['masks'], size=sz, mode='nearest')
-                raise NotImplementedError('')
+                    resize_masks(tg, sz)
+
+        for tg in targets:
+            assert_visible_alignment(tg, *images.shape[-2:])
 
         return images, targets
