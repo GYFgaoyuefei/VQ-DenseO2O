@@ -273,6 +273,8 @@ def _read_ap(path):
         if not set(AP_COLUMNS).intersection(reader.fieldnames):
             raise ValueError('AP CSV requires named percent-unit AP_COLUMNS')
         for source in reader:
+            if 'Split' in reader.fieldnames and source.get('Split') != 'test':
+                raise ValueError('Paper AP CSV must contain Test results; Validation must remain separate')
             model = aliases.get(source['Model'])
             try:
                 seed = int(source['Seed'])

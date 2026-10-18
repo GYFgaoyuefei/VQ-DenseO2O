@@ -1,4 +1,4 @@
-"""Unified Paper v2 CLI; all training/evaluation delegates to repository train.py."""
+"""Unified Paper v2 CLI for native training, explicit evaluation and reporting."""
 import argparse
 import copy
 import csv
@@ -411,6 +411,13 @@ def summarize_efficiency(args):
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def ap_results(args):
+    from tools.paper_v2 import ap_workflow
+    if args.command == 'evaluate-ap':
+        return ap_workflow.evaluate_and_summarize(args)
+    return ap_workflow.summarize(args)
+
+
 def summarize(args):
     directory = Path(args.output_dir) if args.output_dir else ROOT / 'outputs/paper_v2'
     rows = []
@@ -432,7 +439,7 @@ def summarize(args):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command', choices=['preflight', 'smoke', 'smoke-train', 'train', 'validate', 'evaluate-test', 'benchmark', 'summarize', 'summarize-efficiency', 'generate-combinations', 'commands'])
+    p.add_argument('command', choices=['preflight', 'smoke', 'smoke-train', 'train', 'validate', 'evaluate-test', 'benchmark', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'generate-combinations', 'commands'])
     p.add_argument('--model', choices=[*MODELS, *COMBINATIONS, 'all'], default='all')
     p.add_argument('--seed', type=int, choices=[0, 42, 3407], default=42)
     p.add_argument('--device', default='cuda:0')
@@ -448,6 +455,13 @@ def parser():
     p.add_argument('--smoke-epoch', type=int, default=0, help='smoke-train only: recipe epoch; 10 probes the active CopyBlend stage')
     p.add_argument('--efficiency-dir', help='Efficiency campaign directory; defaults to outputs/paper_v2/efficiency')
     p.add_argument('--ap-csv', help='Explicit AP-by-seed CSV in percent units, with Model and Seed columns')
+    p.add_argument('--ap-split', choices=['test', 'validation'], default='test', help='AP report split; never changes checkpoint selection')
+    p.add_argument('--ap-dir', help='One-split AP campaign directory; default outputs/paper_v2/ap/<split>')
+    p.add_argument('--runs-dir', help='AP only: parent of <model>/seed_<seed> completed run directories')
+    p.add_argument('--ap-models', nargs='+', choices=[*MODELS, *COMBINATIONS], help='AP only: default five independent models; may include C1-C4')
+    p.add_argument('--ap-seeds', nargs='+', type=int, choices=[0, 42, 3407], default=[0, 42, 3407], help='AP evaluation seeds; aggregates still require all three')
+    p.add_argument('--data-root', help='AP only: evaluation dataset root; otherwise TOMATO_DATA_ROOT or saved Validation paths')
+    p.add_argument('--illumination-map', help='AP only: verified JSON mapping of image IDs or filenames to acquisition light labels')
     return p
 
 
@@ -458,7 +472,7 @@ def main():
         raise ValueError('nproc-per-node must be positive')
     if args.threads < 1:
         raise ValueError('threads must be positive')
-    if args.command not in ('preflight', 'summarize', 'summarize-efficiency', 'generate-combinations', 'commands') and args.model == 'all':
+    if args.command not in ('preflight', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'generate-combinations', 'commands') and args.model == 'all':
         raise ValueError('Select one --model')
     if args.command == 'generate-combinations':
         generate_combinations()
@@ -469,6 +483,7 @@ def main():
     else:
         {'preflight': preflight, 'smoke': smoke, 'smoke-train': smoke_train, 'train': train, 'validate': evaluate,
          'evaluate-test': evaluate, 'benchmark': benchmark, 'summarize': summarize,
+         'evaluate-ap': ap_results, 'summarize-ap': ap_results,
          'summarize-efficiency': summarize_efficiency}[args.command](args)
 
 

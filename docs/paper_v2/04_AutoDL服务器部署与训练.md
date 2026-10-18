@@ -93,6 +93,17 @@ bash scripts/paper_v2/autodl/summarize_results.sh
 
 Validation/Test默认使用run内best.pth的EMA权重，可在评估脚本末尾加 --checkpoint /真实/路径.pth。评估写入新的带时间戳目录，不覆盖训练日志；Test命令不由训练脚本调用。
 
+最终论文Mixed AP与四光照AP使用新增统一入口（2026-10-19）：
+
+```bash
+# 五组×三个seed：一次推理复用预测，分别计算Mixed及四光照COCO AP
+bash scripts/paper_v2/autodl/evaluate_and_summarize_ap.sh cuda:0 independent
+# 仅汇总已有AP记录，不读取Test图像、不加载模型
+bash scripts/paper_v2/autodl/summarize_ap.sh
+```
+
+该入口固定使用EMA FP32 Mixed Validation选出的`best.pth`，不接受自定义checkpoint。结果位于`outputs/paper_v2/ap/test/`，输出各seed指标及三seed均值/样本标准差；缺失值不补零。`summarize_results.sh`保留原有运行状态/效率汇总职责，不会自动执行Test。九组组合、补算、光照映射和效率主表合并见[10_Test_AP计算与三seed汇总.md](10_Test_AP计算与三seed汇总.md)。
+
 正式benchmark只接受完成120 epoch训练的同一run内best.pth，并核对EMA Mixed Validation选模记录。所有B0–D1及C1–C4共用同一程序：指定RTX PRO 6000 Blackwell Server Edition、PyTorch eager eval/deploy、FP32、禁用autocast/TF32、batch1、GPU驻留全零[1,3,640,640]输入。每seed独立5轮，每轮100次预热、500次正式计时，每次调用前后CUDA同步并用Python wall-clock计时。主延迟独立测量detector + tensor postprocessor；另独立测量forward-only及postprocessor-only。不接受自定义计时次数，不用两段相加代替主延迟。完整协议、FLOPs覆盖说明及论文表格见08_统一效率统计协议.md。
 
 ```bash

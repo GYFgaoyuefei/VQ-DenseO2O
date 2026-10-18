@@ -18,7 +18,9 @@ docs/paper_v2/07_后续论文实验数据整理.md
 docs/paper_v2/08_统一效率统计协议.md
 docs/paper_v2/08_训练前最终检查报告.md
 docs/paper_v2/09_Efficiency_Evaluation_Protocol.md
+docs/paper_v2/10_Test_AP计算与三seed汇总.md
 docs/paper_v2/FILES_CHANGED.txt
+docs/paper_v2/ap_regression_test_results.xml
 docs/paper_v2/efficiency_test_results.xml
 docs/paper_v2/final_acceptance_test_results.xml
 docs/paper_v2/review_test_results.xml
@@ -56,10 +58,12 @@ scripts/paper_v2/autodl/benchmark_all.sh
 scripts/paper_v2/autodl/benchmark_one.sh
 scripts/paper_v2/autodl/env.example.sh
 scripts/paper_v2/autodl/env.sh
+scripts/paper_v2/autodl/evaluate_and_summarize_ap.sh
 scripts/paper_v2/autodl/evaluate_test_one.sh
 scripts/paper_v2/autodl/preflight.sh
 scripts/paper_v2/autodl/smoke_one.sh
 scripts/paper_v2/autodl/smoke_train_one.sh
+scripts/paper_v2/autodl/summarize_ap.sh
 scripts/paper_v2/autodl/summarize_efficiency.sh
 scripts/paper_v2/autodl/summarize_results.sh
 scripts/paper_v2/autodl/train_one.sh
@@ -69,6 +73,10 @@ scripts/paper_v2/autodl/validate_one.sh
 scripts/paper_v2/windows/generate_commands.ps1
 scripts/paper_v2/windows/preflight.ps1
 scripts/paper_v2/windows/run_tests.ps1
+tests/paper_v2/test_ap_evaluate.py
+tests/paper_v2/test_ap_metrics.py
+tests/paper_v2/test_ap_summary.py
+tests/paper_v2/test_ap_workflow.py
 tests/paper_v2/test_config_runner.py
 tests/paper_v2/test_data_pipeline.py
 tests/paper_v2/test_data_sync.py
@@ -84,6 +92,10 @@ tests/paper_v2/test_li_copyblend.py
 tests/paper_v2/test_selection_resume.py
 tests/paper_v2/test_training_acceptance.py
 tools/paper_v2/__init__.py
+tools/paper_v2/ap_evaluate.py
+tools/paper_v2/ap_metrics.py
+tools/paper_v2/ap_summary.py
+tools/paper_v2/ap_workflow.py
 tools/paper_v2/efficiency_flops.py
 tools/paper_v2/efficiency_measure.py
 tools/paper_v2/efficiency_protocol.py
