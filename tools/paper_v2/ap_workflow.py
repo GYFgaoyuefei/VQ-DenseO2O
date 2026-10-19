@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from .efficiency_protocol import MODELS, SEEDS
+from .efficiency_protocol import ALGORITHM_SUITE, MODELS, SEEDS
 
 ROOT = Path(__file__).resolve().parents[2]
 REQUIRED_RUN_FILES = ('config_resolved.yml', 'run_info.json', 'selection.json', 'completed.json', 'best.pth')
@@ -24,7 +24,7 @@ def selected_models(args):
 
 def output_directory(args):
     return (Path(args.ap_dir).expanduser().resolve() if args.ap_dir else
-            ROOT / 'outputs/paper_v2/ap' / args.ap_split)
+            ROOT / 'outputs/paper_v2_beta_select_algorithms/ap' / args.ap_split)
 
 
 def _write_json(path, value):
@@ -57,7 +57,7 @@ def evaluate_and_summarize(args):
     seeds = list(args.ap_seeds)
     if not seeds or len(set(seeds)) != len(seeds) or any(seed not in SEEDS for seed in seeds):
         raise ValueError('AP seeds must be unique values from 0, 42, 3407')
-    runs = Path(args.runs_dir).expanduser().resolve() if args.runs_dir else ROOT / 'outputs/paper_v2'
+    runs = Path(args.runs_dir).expanduser().resolve() if args.runs_dir else ROOT / 'outputs/paper_v2_beta_select_algorithms'
     output = output_directory(args)
     mapping = None
     if args.illumination_map:
@@ -65,7 +65,7 @@ def evaluate_and_summarize(args):
         if not isinstance(mapping, dict):
             raise ValueError('--illumination-map must contain a JSON object mapping image IDs or filenames to light labels')
     exclusions = load_exclusions(output, args.ap_split)
-    attempts = {'split': args.ap_split, 'models': models, 'seeds': seeds,
+    attempts = {'algorithm_suite': ALGORITHM_SUITE, 'split': args.ap_split, 'models': models, 'seeds': seeds,
                 'started_utc': datetime.now(timezone.utc).isoformat(), 'status': 'RUNNING', 'runs': []}
     attempt_path = output / 'evaluation_attempts.json'
 

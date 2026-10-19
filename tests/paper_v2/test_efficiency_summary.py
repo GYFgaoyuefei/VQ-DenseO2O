@@ -20,7 +20,7 @@ def make_record(seed=0, primary=10.0, model='baseline_native'):
                             'warmup_iterations': 100, 'timed_iterations': 500,
                             'peak_gpu_memory_bytes': 1000000 + repeat * 1000}
         repeats.append({'repeat': repeat, 'scopes': scopes})
-    return {'schema': 'paper_v2_efficiency_record_v1', 'status': 'MEASURED',
+    return {'schema': 'paper_v2_efficiency_record_v1', 'algorithm_suite': 'beta_select_algorithms_v1', 'status': 'MEASURED',
             'protocol': protocol(), 'model': model, 'seed': seed, 'epochs': 120,
             'selected_epoch_zero_based': 76, 'checkpoint': {'path': f'model_{seed}.pth', 'sha256': 'abc'},
             'full_params_m': 12.5, 'deploy_params_m': 11.25,
@@ -57,6 +57,8 @@ def read_csv(root, filename):
 
 
 def write_ap(path, rows, columns=('Model', 'Seed', AP_COLUMNS[0])):
+    columns = (*columns, 'Algorithm suite')
+    rows = [dict(row, **{'Algorithm suite': 'beta_select_algorithms_v1'}) for row in rows]
     with path.open('w', encoding='utf-8-sig', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
         writer.writeheader()
@@ -123,6 +125,8 @@ def test_missing_seeds_never_look_like_complete_measurements(tmp_path, count):
 
 
 @pytest.mark.parametrize('mutation,match', [
+    (lambda r: r.pop('algorithm_suite'), 'Historical efficiency'),
+    (lambda r: r.update(algorithm_suite='paper_v2_old'), 'Historical efficiency'),
     (lambda r: r['protocol'].update(timed_iterations=300), 'Nonstandard efficiency protocol'),
     (lambda r: r['repeats'].pop(), 'Exactly 5 repeats'),
     (lambda r: r['repeats'][0]['scopes'][SCOPES[0]].update(timed_iterations=300), '500 timed'),
@@ -159,13 +163,33 @@ def test_invalid_evidence_is_rejected_without_replacing_reports(tmp_path, mutati
     assert (tmp_path / 'efficiency_summary.csv').read_bytes() == prior
 
 
+@pytest.mark.parametrize('with_protocol', [True, False])
+def test_historical_summary_directory_cannot_be_overwritten(tmp_path, with_protocol):
+    report = tmp_path / 'paper_efficiency_table.csv'
+    report.write_text('historical results', encoding='utf-8')
+    if with_protocol:
+        (tmp_path / 'efficiency_protocol.json').write_text('{"schema":"paper_v2_efficiency_summary_v1"}')
+    before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
+    with pytest.raises(ValueError, match='Historical efficiency|lack suite provenance'):
+        summarize(tmp_path)
+    assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+def test_historical_ap_csv_is_not_imported(tmp_path):
+    path = tmp_path / 'old_ap.csv'
+    path.write_text('Model,Seed,Mixed AP (%)\nbaseline_native,0,42\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='Algorithm suite'):
+        summarize(tmp_path / 'new_efficiency', ap_csv=path)
+    assert not (tmp_path / 'new_efficiency').exists()
+
+
 @pytest.mark.parametrize('location,value', [
     ('torch_version', '2.9.0'), ('torchvision_version', '0.24.0'),
     ('cuda_version', '13.0'), ('cudnn_version', 99999), ('tool_version', '99.0'),
     ('cpu_threads', 4), ('cudnn_deterministic', True),
 ])
 def test_cross_model_runtime_and_profiler_versions_cannot_be_mixed(tmp_path, location, value):
-    first, second = make_record(), make_record(42, model='gr_vq')
+    first, second = make_record(), make_record(42, model='vq_dense_o2o')
     second['flops' if location == 'tool_version' else 'runtime'][location] = value
     write_record(tmp_path, first)
     write_record(tmp_path, second)

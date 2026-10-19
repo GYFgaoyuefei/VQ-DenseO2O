@@ -157,9 +157,9 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
         for branch, values in diagnostics.items():
             if isinstance(values, dict):
                 for key, value in values.items():
-                    result[f'gr_vq_{branch}_{key}'] = float(value)
+                    result[f'vq_dense_o2o_{branch}_{key}'] = float(value)
             else:
-                result[f'gr_vq_{branch}'] = float(values)
+                result[f'vq_dense_o2o_{branch}'] = float(values)
     return result
 
 

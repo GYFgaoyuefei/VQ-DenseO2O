@@ -132,8 +132,8 @@ def run_bounded_train(solver, *, steps, epoch):
         from engine.backbone.dc_sta import audit_dc_training
         report['dc_sta_before_training'] = audit_dc_training(solver.model, solver.optimizer, solver.ema)
         audit = report['dc_sta_before_training']
-        if audit['status'] == 'FAIL' or (audit['enabled'] and not audit['identity_initialized']):
-            raise RuntimeError('DC-STA must start from identity with complete optimizer/EMA coverage')
+        if audit['status'] == 'FAIL' or (audit['enabled'] and not audit['near_identity_initialized']):
+            raise RuntimeError('DC-STA must start from the original Sigmoid gain with complete optimizer/EMA coverage')
         report['rank_batch_size'] = loader.batch_size
         scheduler = FlatCosineLRScheduler(solver.optimizer, cfg.lr_gamma, len(loader), cfg.epoches,
                                          cfg.warmup_iter, cfg.flat_epoch, cfg.no_aug_epoch)

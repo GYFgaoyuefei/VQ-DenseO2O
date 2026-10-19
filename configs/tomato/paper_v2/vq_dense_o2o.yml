@@ -1,4 +1,4 @@
 __include__: ['common.yml']
 innovation:
   instance_mask_sync: true
-  gr_vq: {enabled: true}
+  vq_dense_o2o: {enabled: true, beta: 0.10}

@@ -134,8 +134,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
         if self.mixup_prob > 0 or self.copyblend_prob > 0:
             if self.data_vis and os.path.isdir(self.vis_save):
-                for file in os.listdir(self.vis_save):
-                    os.remove('{}/{}'.format(self.vis_save, file))
+                raise FileExistsError('Existing visualization files are not deleted; choose a fresh vis_save')
             os.makedirs(self.vis_save, exist_ok=True) if self.data_vis else None
 
             if self.mixup_prob > 0:

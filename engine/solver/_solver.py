@@ -103,8 +103,9 @@ class BaseSolver(object):
             if self.dc_sta_training_audit['status'] != 'PASS':
                 raise RuntimeError(f'DC-STA training wiring failed: {self.dc_sta_training_audit}')
             if (self.cfg.yaml_cfg.get('paper_v2') and not self.cfg.resume
-                    and not self.dc_sta_training_audit['identity_initialized']):
-                raise RuntimeError('Paper v2 DC-STA initial gates must equal 1; use shared native pretrained initialization')
+                    and not self.dc_sta_training_audit['near_identity_initialized']):
+                raise RuntimeError('DC-STA requires beta_select sigmoid initialization (detail gain 0.999); '
+                                   'use shared native pretrained initialization')
             print('DC-STA optimizer/EMA coverage: PASS '
                   f"({self.dc_sta_training_audit['parameter_count']} gate tensors)")
 

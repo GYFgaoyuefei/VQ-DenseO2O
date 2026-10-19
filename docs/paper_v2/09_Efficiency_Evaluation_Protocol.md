@@ -1,3 +1,5 @@
+> 历史文档（paper_v2.0）。本轮 paper_v3.0 已恢复原 VQ-DenseO2O 与 Sigmoid DC-STA；请从 [当前文档入口](README.md) 阅读新说明。以下旧算法、旧命令和旧测试结论仅作追溯，不能用于本轮新实验。
+
 # Efficiency Evaluation Protocol
 
 以下英文段落可用于论文方法部分；当前真实指定GPU实验为NOT RUN。获得完整真实记录后再搭配结果表使用，不应把方法描述当作已完成实验的证据。

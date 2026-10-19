@@ -1,0 +1,95 @@
+paper_v3.0 migration file list
+Base commit: 6da37427fb5627c5b8c8b32ef9905dfe83b1e186
+Reference beta_select: f92edb021fd468e354f5767bb81ac745e0347cfe
+Algorithm suite: beta_select_algorithms_v1
+New result root: outputs/paper_v2_beta_select_algorithms/
+
+M = modified; A = new; D = obsolete source/config/test removed.
+D never refers to any training result. Preserve all existing outputs.
+The pre-existing untracked ap_failure_recovery_test_results.xml is not part of this migration.
+
+M configs/tomato/paper_v2/common.yml
+M docs/paper_v2/01_算法设计与数学公式.md
+M docs/paper_v2/02_源码模块与配置说明.md
+M docs/paper_v2/03_Windows本地操作指南.md
+M docs/paper_v2/04_AutoDL服务器部署与训练.md
+M docs/paper_v2/05_独立实验及组合消融设计.md
+M docs/paper_v2/06_正确性测试报告.md
+M docs/paper_v2/07_后续论文实验数据整理.md
+M docs/paper_v2/08_统一效率统计协议.md
+M docs/paper_v2/08_训练前最终检查报告.md
+M docs/paper_v2/09_Efficiency_Evaluation_Protocol.md
+M docs/paper_v2/10_Test_AP计算与三seed汇总.md
+M engine/backbone/dc_sta.py
+M engine/core/innovation_config.py
+M engine/data/dataloader.py
+M engine/deim/__init__.py
+M engine/deim/gr_vq_criterion.py
+M engine/deim/gr_vq_quality.py
+M engine/solver/_solver.py
+M engine/solver/det_engine.py
+M scripts/paper_v2/autodl/benchmark_all.sh
+M scripts/paper_v2/autodl/env.example.sh
+M scripts/paper_v2/autodl/env.sh
+M scripts/paper_v2/autodl/evaluate_and_summarize_ap.sh
+M scripts/paper_v2/autodl/train_remaining_seeds.sh
+M scripts/paper_v2/autodl/train_seed42.sh
+M tests/paper_v2/test_ap_evaluate.py
+M tests/paper_v2/test_ap_summary.py
+M tests/paper_v2/test_ap_workflow.py
+M tests/paper_v2/test_config_runner.py
+M tests/paper_v2/test_data_pipeline.py
+M tests/paper_v2/test_dc_sta.py
+M tests/paper_v2/test_dc_training_guard.py
+M tests/paper_v2/test_efficiency_cli.py
+M tests/paper_v2/test_efficiency_measure.py
+M tests/paper_v2/test_efficiency_summary.py
+M tests/paper_v2/test_training_acceptance.py
+M tools/paper_v2/ap_evaluate.py
+M tools/paper_v2/ap_summary.py
+M tools/paper_v2/ap_workflow.py
+M tools/paper_v2/efficiency_protocol.py
+M tools/paper_v2/efficiency_summary.py
+M tools/paper_v2/run.py
+M tools/paper_v2/train_smoke.py
+A .gitattributes
+A configs/tomato/paper_v2/combinations/li_copyblend_dc_sta.yml
+A configs/tomato/paper_v2/combinations/vq_dense_o2o_dc_sta.yml
+A configs/tomato/paper_v2/combinations/vq_dense_o2o_li_copyblend.yml
+A configs/tomato/paper_v2/combinations/vq_dense_o2o_li_copyblend_dc_sta.yml
+A configs/tomato/paper_v2/vq_dense_o2o.yml
+A docs/paper_v2/01_算法实现说明.md
+A docs/paper_v2/02_实验配置矩阵.md
+A docs/paper_v2/03_beta_select迁移说明.md
+A docs/paper_v2/04_Windows本地操作说明.md
+A docs/paper_v2/05_AutoDL训练命令.md
+A docs/paper_v2/06_算法正确性测试报告.md
+A docs/paper_v2/07_后续组合消融与统计说明.md
+A docs/paper_v2/PAPER_V3_FILES_CHANGED.txt
+A docs/paper_v2/README.md
+A docs/paper_v2/ablation_config_audit.md
+A docs/paper_v2/paper_v3_config_guard_tests.xml
+A docs/paper_v2/paper_v3_script_checks.json
+A docs/paper_v2/paper_v3_synthetic_smoke_results.json
+A docs/paper_v2/paper_v3_test_results.xml
+A engine/deim/vq_criterion.py
+A engine/deim/vq_quality.py
+A tests/paper_v2/references/beta_dc_sta.py
+A tests/paper_v2/test_beta_baseline_reference.py
+A tests/paper_v2/test_config_ablation_audit.py
+A tests/paper_v2/test_vq_criterion.py
+A tests/paper_v2/test_vq_quality.py
+A tools/paper_v2/config_audit.py
+D configs/tomato/paper_v2/combinations/C1.yml
+D configs/tomato/paper_v2/combinations/C2.yml
+D configs/tomato/paper_v2/combinations/C3.yml
+D configs/tomato/paper_v2/combinations/C4.yml
+D configs/tomato/paper_v2/gr_vq.yml
+D tests/paper_v2/test_gr_vq.py
+D tests/paper_v2/test_gr_vq_criterion.py
+
+Generated ignored artifact: outputs/paper_v2/config_ablation_matrix.csv
+Generated ignored evidence: outputs/paper_v2_beta_select_algorithms/checks/synthetic/*.json
+Generated ignored delivery: outputs/paper_v2_beta_select_algorithms/delivery/paper_v3_source.zip
+
+No git commit/push, remote upload, full training, or real Test evaluation was performed.

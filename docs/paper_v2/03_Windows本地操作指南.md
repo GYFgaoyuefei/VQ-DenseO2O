@@ -1,3 +1,5 @@
+> 历史文档（paper_v2.0）。本轮 paper_v3.0 已恢复原 VQ-DenseO2O 与 Sigmoid DC-STA；请从 [当前文档入口](README.md) 阅读新说明。以下旧算法、旧命令和旧测试结论仅作追溯，不能用于本轮新实验。
+
 # Windows 本地操作指南
 
 所有命令在PowerShell执行。本轮使用已有环境 D:\ProgramData\anaconda3\envs\pytorch310\python.exe；默认base Python的torch DLL初始化失败，因此没有使用它，也没有安装依赖。

@@ -1,4 +1,4 @@
-"""GT-referenced foreground quality, with continuous FP32 mask integration.
+"""Historical GR-VQ geometry; excluded from formal Paper v3 experiments.
 
 Each binary pixel occupies [x, x+1] x [y, y+1]. Bilinear interpolation of
 the padded summed-area table therefore integrates fractional pixel edges

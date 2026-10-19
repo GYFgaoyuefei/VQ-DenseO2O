@@ -3,11 +3,13 @@ import copy
 
 HARDWARE = 'NVIDIA RTX PRO 6000 Blackwell Server Edition'
 SEEDS = (0, 42, 3407)
-MODELS = ('baseline_native', 'baseline_maskaware', 'gr_vq', 'li_copyblend', 'dc_sta',
-          'C1', 'C2', 'C3', 'C4')
-LABELS = dict(zip(MODELS, ('Baseline', 'Baseline (mask-aware)', 'GR-VQ', 'LI-CopyBlend',
-                         'DC-STA', 'GR-VQ + LI-CopyBlend', 'GR-VQ + DC-STA',
-                         'LI-CopyBlend + DC-STA', 'GR-VQ + LI-CopyBlend + DC-STA')))
+MODELS = ('baseline_native', 'baseline_maskaware', 'vq_dense_o2o', 'li_copyblend', 'dc_sta',
+          'vq_dense_o2o_li_copyblend', 'vq_dense_o2o_dc_sta', 'li_copyblend_dc_sta',
+          'vq_dense_o2o_li_copyblend_dc_sta')
+ALGORITHM_SUITE = 'beta_select_algorithms_v1'
+LABELS = dict(zip(MODELS, ('Baseline', 'Baseline (mask-aware)', 'VQ-DenseO2O', 'LI-CopyBlend',
+                         'DC-STA', 'VQ-DenseO2O + LI-CopyBlend', 'VQ-DenseO2O + DC-STA',
+                         'LI-CopyBlend + DC-STA', 'VQ-DenseO2O + LI-CopyBlend + DC-STA')))
 SCOPES = ('detector_plus_postprocessor', 'detector_forward', 'postprocessor')
 COCO_NAMES = ('AP', 'AP50', 'AP75', 'AP-S', 'AP-M', 'AP-L',
               'AR1', 'AR10', 'AR100', 'AR-S', 'AR-M', 'AR-L')
@@ -51,7 +53,7 @@ _PROTOCOL = {
     'gflops_coverage': 'PARTIAL unless full operator coverage is proven; calflops does not enumerate all unsupported ops',
     'peak_gpu_memory': 'torch.cuda.max_memory_allocated after warmup/reset per measured scope; includes resident model/input; excludes profiling',
     'excluded': ['image IO', 'preprocessing', 'dataloader', 'H2D/D2H transfers',
-                 'loss/criterion', 'GR-VQ training computation', 'LI-CopyBlend training augmentation',
+                 'loss/criterion', 'VQ-DenseO2O training computation', 'LI-CopyBlend training augmentation',
                  'COCO evaluator'],
 }
 

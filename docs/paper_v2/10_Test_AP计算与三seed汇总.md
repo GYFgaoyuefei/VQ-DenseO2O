@@ -1,3 +1,5 @@
+> 历史文档（paper_v2.0）。本轮 paper_v3.0 已恢复原 VQ-DenseO2O 与 Sigmoid DC-STA；请从 [当前文档入口](README.md) 阅读新说明。以下旧算法、旧命令和旧测试结论仅作追溯，不能用于本轮新实验。
+
 # Test Mixed AP与四光照AP统一计算
 
 更新日期：2026-10-19。按用户确认，默认用于最终Test结果。脚本只评估已完成训练、由EMA FP32 Mixed Validation AP选出的`best.pth`，不训练、不重新选模、不用Test选择checkpoint。Validation与Test使用不同报告目录。

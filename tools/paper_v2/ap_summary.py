@@ -10,13 +10,13 @@ from pathlib import Path
 import re
 import statistics
 
-from .efficiency_protocol import AP_COLUMNS, MODELS, SEEDS
+from .efficiency_protocol import ALGORITHM_SUITE, AP_COLUMNS, MODELS, SEEDS
 
 
 REQUIRED_AP = (AP_COLUMNS[0], *AP_COLUMNS[-4:])
 IMAGE_GROUPS = ('mixed', 'natural', 'artificial', 'low_light', 'sodium_light')
 BY_SEED_COLUMNS = ('Model', 'Seed', 'Split', 'Selected epoch',
-                   'selected_epoch_zero_based', 'Status', *AP_COLUMNS)
+                   'selected_epoch_zero_based', 'Status', *AP_COLUMNS, 'Algorithm suite')
 SUMMARY_COLUMNS = ('Model', 'Split', 'Status', 'measured_seed_count', 'seeds',
                    *AP_COLUMNS,
                    *(column.replace(' (%)', ' sample SD (%)') for column in AP_COLUMNS))
@@ -48,6 +48,8 @@ def validate_record(record, split=None):
     _object(record, 'AP record')
     if record.get('schema') != 'paper_v2_ap_record_v1':
         raise ValueError('Unknown AP record schema')
+    if record.get('algorithm_suite') != ALGORITHM_SUITE:
+        raise ValueError('Historical AP cannot enter the new beta_select algorithm suite')
     if record.get('status') not in ('COMPLETE', 'INCOMPLETE'):
         raise ValueError('AP record status must be COMPLETE or INCOMPLETE')
     if record.get('model') not in MODELS:
@@ -119,12 +121,41 @@ def _signature(record):
             record['tool']['name'], record['tool']['version'])
 
 
+def validate_campaign(output_dir, split):
+    """Bind existing reports before exclusions or retry ledgers can be written.
+
+    A failed cache may be skipped by the ordinary recovery path, so checking
+    only included raw records is insufficient to protect an older campaign.
+    """
+    output_dir = Path(output_dir)
+    markers = [output_dir / name for name in ('ap_protocol.json', 'evaluation_attempts.json')]
+    existing = [path for path in markers if path.exists()]
+    for path in existing:
+        metadata = _object(json.loads(path.read_text(encoding='utf-8')), path.name)
+        if metadata.get('algorithm_suite') != ALGORITHM_SUITE:
+            raise ValueError(f'Historical or unbound AP campaign: {path}; use a new --ap-dir')
+        if metadata.get('split') != split:
+            label = 'Evaluation attempt split' if path.name == 'evaluation_attempts.json' else 'AP protocol split'
+            raise ValueError(f'{label} does not match the requested AP split')
+    if not existing:
+        # Raw-only exports can be summarized, but only with explicit new-suite
+        # evidence. Legacy tables without any binding must not be overwritten.
+        raw_paths = list((output_dir / 'raw').rglob('metrics.json'))
+        for path in raw_paths:
+            record = _object(json.loads(path.read_text(encoding='utf-8')), str(path))
+            if record.get('algorithm_suite') != ALGORITHM_SUITE:
+                raise ValueError(f'Historical or unbound AP campaign: {path}; use a new --ap-dir')
+        if not raw_paths and any((output_dir / name).exists() for name in ('ap_by_seed.csv', 'ap_summary.csv')):
+            raise ValueError(f'Historical or unbound AP tables in {output_dir}; use a new --ap-dir')
+
+
 def load_exclusions(output_dir, split):
     """Keep failed/unverified runs out of reports, including offline summaries.
 
     ``excluded_runs`` retains unresolved failures across one-seed retries. The
     current attempt's rows supersede it, so a successful retry clears its key.
     """
+    validate_campaign(output_dir, split)
     path = Path(output_dir) / 'evaluation_attempts.json'
     if not path.exists():
         return {}
@@ -214,7 +245,7 @@ def summarize(output_dir, split='test', models=None):
     by_seed = [dict({'Model': record['model'], 'Seed': record['seed'], 'Split': split,
                      'Selected epoch': record['selected_epoch_zero_based'] + 1,
                      'selected_epoch_zero_based': record['selected_epoch_zero_based'],
-                     'Status': record['status']},
+                     'Status': record['status'], 'Algorithm suite': ALGORITHM_SUITE},
                     **{column: record['metrics'][column] for column in AP_COLUMNS})
                for record in records]
     summary, model_status = [], {}
@@ -247,7 +278,7 @@ def summarize(output_dir, split='test', models=None):
               else 'COMPLETE' if all(row['Status'] == 'COMPLETE' for row in summary)
               else ('INCOMPLETE' if records else 'NOT RUN'))
     metadata = {
-        'schema': 'paper_v2_ap_summary_v1', 'split': split, 'status': status,
+        'schema': 'paper_v2_ap_summary_v1', 'algorithm_suite': ALGORITHM_SUITE, 'split': split, 'status': status,
         'output_dir': str(output_dir.resolve()), 'models': list(models), 'seeds': list(SEEDS),
         'measured_model_seed_count': len(records), 'expected_model_seed_count': len(models) * len(SEEDS),
         'complete_models': [row['Model'] for row in summary if row['Status'] == 'COMPLETE'],

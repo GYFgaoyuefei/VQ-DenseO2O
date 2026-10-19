@@ -15,6 +15,7 @@ import tempfile
 
 import torch
 import yaml
+from .efficiency_protocol import ALGORITHM_SUITE
 
 
 SCHEMA = 'paper_v2_ap_record_v1'
@@ -77,7 +78,7 @@ def _binding(run_dir, model, seed, split, data_root, illumination_map):
     actual = cfg['innovation']
     if (actual['instance_mask_sync'] != expected['instance_mask_sync'] or
             any(actual[key]['enabled'] != expected[key]['enabled']
-                for key in ('gr_vq', 'li_copyblend', 'dc_sta'))):
+                for key in ('vq_dense_o2o', 'li_copyblend', 'dc_sta'))):
         raise ValueError('AP model name does not match saved algorithm switches')
     if cfg.get('eval_spatial_size') != [640, 640] or cfg['PostProcessor']['num_top_queries'] != 300:
         raise ValueError('AP requires native 640 input and postprocessor top-k=300')
@@ -135,7 +136,7 @@ def reusable_record(run_dir, model, seed, output_dir, split='test', device='cuda
         return None
     _, _, identity, epoch, dataset = _binding(run_dir, model, seed, split, data_root, illumination_map)
     record = json.loads(path.read_text(encoding='utf-8'))
-    expected = {'schema': SCHEMA, 'model': model, 'seed': seed, 'split': split,
+    expected = {'schema': SCHEMA, 'algorithm_suite': ALGORITHM_SUITE, 'model': model, 'seed': seed, 'split': split,
                 'selected_epoch_zero_based': epoch, 'checkpoint': identity,
                 'dataset': dataset, 'evaluation': EVALUATION}
     if any(record.get(key) != value for key, value in expected.items()):
@@ -218,6 +219,8 @@ def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0'
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         raise ValueError('AP evaluation is single-process; do not use torchrun/DDP')
     path = record_path(output_dir, model, seed)
+    from tools.paper_v2.ap_summary import validate_campaign
+    validate_campaign(output_dir, split)
     if path.parent.exists():
         raise FileExistsError(f'AP result directory already exists: {path.parent}')
     cfg, checkpoint, identity, epoch, dataset = _binding(
@@ -244,7 +247,7 @@ def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0'
     result = evaluate_predictions(coco_gt, predictions, illumination_map=illumination_map)
     if _checkpoint_identity(checkpoint) != identity or _sha256(dataset['annotation_file']) != dataset['annotation_sha256']:
         raise ValueError('Checkpoint or annotation changed during evaluation; refusing stale provenance')
-    record = {'schema': SCHEMA, 'model': model, 'seed': seed, 'split': split,
+    record = {'schema': SCHEMA, 'algorithm_suite': ALGORITHM_SUITE, 'model': model, 'seed': seed, 'split': split,
               'selected_epoch_zero_based': epoch, 'checkpoint': identity, 'dataset': dataset,
               'evaluation': copy.deepcopy(EVALUATION), 'device': str(device),
               'tool': {'name': 'faster-coco-eval', 'version': version('faster-coco-eval')},

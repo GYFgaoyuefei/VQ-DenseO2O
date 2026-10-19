@@ -10,11 +10,11 @@ from pathlib import Path
 import statistics
 
 from .efficiency_protocol import (
-    AP_COLUMNS, HARDWARE, LABELS, MODELS, PAPER_COLUMNS, SCOPES, SEEDS,
+    ALGORITHM_SUITE, AP_COLUMNS, HARDWARE, LABELS, MODELS, PAPER_COLUMNS, SCOPES, SEEDS,
     protocol, validate_protocol,
 )
 
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / 'outputs/paper_v2/efficiency'
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[2] / 'outputs/paper_v2_beta_select_algorithms/efficiency'
 RUNTIME_KEYS = ('torch_version', 'torchvision_version', 'cuda_version', 'cudnn_version')
 RUNTIME_SETTINGS = ('cpu_threads', 'cudnn_deterministic')
 FLOPS_STATUSES = ('PARTIAL', 'UNAVAILABLE', 'FAILED', 'CONVENTION_MISMATCH')
@@ -77,6 +77,8 @@ def validate_record(record):
         raise ValueError('efficiency record must be a JSON object')
     if record.get('schema') != 'paper_v2_efficiency_record_v1' or record.get('status') != 'MEASURED':
         raise ValueError('Only MEASURED paper_v2_efficiency_record_v1 records can be summarized')
+    if record.get('algorithm_suite') != ALGORITHM_SUITE:
+        raise ValueError('Historical efficiency cannot enter the new beta_select algorithm suite')
     if not isinstance(record.get('protocol'), dict):
         raise ValueError('Missing efficiency protocol')
     validate_protocol(record['protocol'])
@@ -264,15 +266,19 @@ def _read_ap(path):
     if path is None or not path.exists():
         return []
     aliases = {**{model: model for model in MODELS}, **{label: model for model, label in LABELS.items()},
-               **dict(zip(('B0', 'B1', 'G1', 'L1', 'D1', 'C1', 'C2', 'C3', 'C4'), MODELS))}
+               **dict(zip(('B0', 'B1', 'V1', 'L1', 'D1', 'C1', 'C2', 'C3', 'C4'), MODELS))}
     rows, seen = [], set()
     with path.open(newline='', encoding='utf-8-sig') as handle:
         reader = csv.DictReader(handle)
         if not reader.fieldnames or not {'Model', 'Seed'}.issubset(reader.fieldnames):
             raise ValueError('AP CSV requires Model and Seed columns')
+        if 'Algorithm suite' not in reader.fieldnames:
+            raise ValueError('AP CSV requires Algorithm suite; historical AP must remain separate')
         if not set(AP_COLUMNS).intersection(reader.fieldnames):
             raise ValueError('AP CSV requires named percent-unit AP_COLUMNS')
         for source in reader:
+            if source.get('Algorithm suite') != ALGORITHM_SUITE:
+                raise ValueError('Historical AP cannot enter the new beta_select algorithm suite')
             if 'Split' in reader.fieldnames and source.get('Split') != 'test':
                 raise ValueError('Paper AP CSV must contain Test results; Validation must remain separate')
             model = aliases.get(source['Model'])
@@ -286,7 +292,7 @@ def _read_ap(path):
             if key in seen:
                 raise ValueError(f'Duplicate AP model/seed: {key}')
             seen.add(key)
-            row = {'Model': model, 'Seed': seed}
+            row = {'Model': model, 'Seed': seed, 'Algorithm suite': ALGORITHM_SUITE}
             for column in AP_COLUMNS:
                 raw = source.get(column, '')
                 if raw is None or not raw.strip():
@@ -323,9 +329,28 @@ def _write_csv(path, columns, rows):
     temporary.replace(path)
 
 
+def check_campaign(output_dir):
+    """Reject historical destinations before writing any new result or report."""
+    output_dir = Path(output_dir)
+    metadata = output_dir / 'efficiency_protocol.json'
+    if metadata.exists():
+        previous = json.loads(metadata.read_text(encoding='utf-8'))
+        if previous.get('algorithm_suite') != ALGORITHM_SUITE:
+            raise ValueError('Historical efficiency campaign cannot be overwritten; use a new directory')
+    elif any((output_dir / name).exists() for name in (
+            'efficiency_by_seed.csv', 'efficiency_summary.csv', 'paper_efficiency_table.csv',
+            'ap_by_seed_snapshot.csv')):
+        raise ValueError('Existing efficiency reports lack suite provenance; use a new directory')
+    for path in output_dir.glob('raw/*/seed_*/efficiency.json'):
+        record = json.loads(path.read_text(encoding='utf-8'))
+        if record.get('algorithm_suite') != ALGORITHM_SUITE:
+            raise ValueError(f'Historical efficiency record cannot enter the new campaign: {path}')
+
+
 def summarize(output_dir=DEFAULT_OUTPUT_DIR, ap_csv=None):
     """Rebuild four reports from explicit evidence; validation failure writes nothing."""
     output_dir = Path(output_dir)
+    check_campaign(output_dir)
     records = _load_records(output_dir)
     snapshot = output_dir / 'ap_by_seed_snapshot.csv'
     if ap_csv is not None and not Path(ap_csv).is_file():
@@ -335,7 +360,7 @@ def summarize(output_dir=DEFAULT_OUTPUT_DIR, ap_csv=None):
     summary = [_summary_row(model, [row for row in by_seed if row['Model'] == model]) for model in MODELS]
     paper = [_paper_row(row, ap_rows) for row in summary]
     metadata = {
-        'schema': 'paper_v2_efficiency_summary_v1', 'protocol': protocol(),
+        'schema': 'paper_v2_efficiency_summary_v1', 'algorithm_suite': ALGORITHM_SUITE, 'protocol': protocol(),
         'status': 'COMPLETE' if len(records) == len(MODELS) * len(SEEDS) else
                   ('INCOMPLETE' if records else 'NOT RUN'),
         'measured_model_seed_count': len(records), 'expected_model_seed_count': len(MODELS) * len(SEEDS),
@@ -364,7 +389,7 @@ def summarize(output_dir=DEFAULT_OUTPUT_DIR, ap_csv=None):
     _write_csv(output_dir / 'efficiency_summary.csv', SUMMARY_COLUMNS, summary)
     _write_csv(output_dir / 'paper_efficiency_table.csv', PAPER_OUTPUT_COLUMNS, paper)
     if ap_csv is not None:
-        _write_csv(snapshot, ('Model', 'Seed', *AP_COLUMNS), ap_rows)
+        _write_csv(snapshot, ('Model', 'Seed', *AP_COLUMNS, 'Algorithm suite'), ap_rows)
     temporary = previous_protocol.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(metadata, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     temporary.replace(previous_protocol)

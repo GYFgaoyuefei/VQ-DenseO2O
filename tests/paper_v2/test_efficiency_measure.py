@@ -302,6 +302,7 @@ def test_measure_result_crosses_real_summary_validation_and_csv_boundary(runtime
     measured = measure_module.measure(detector, processor, 'cuda:0')
     record = {
         'schema': 'paper_v2_efficiency_record_v1', 'status': 'MEASURED',
+        'algorithm_suite': 'beta_select_algorithms_v1',
         'protocol': protocol(), 'model': 'baseline_native', 'seed': 42,
         'epochs': 120, 'selected_epoch_zero_based': 76,
         'checkpoint': {'path': 'fake-unit-test/best.pth', 'size_bytes': 1,

@@ -9,8 +9,8 @@ from torch.nn import functional as F
 
 from engine.deim.box_ops import box_cxcywh_to_xyxy, box_iou
 from engine.deim.deim_criterion import DEIMCriterion
-from engine.deim.gr_vq_criterion import GRVQDEIMCriterion
-from engine.deim.gr_vq_quality import gr_vq_quality
+from engine.deim.vq_criterion import VQDEIMCriterion
+from engine.deim.vq_quality import visible_quality, calibrate_quality
 from engine.deim.matcher import HungarianMatcher
 
 
@@ -31,7 +31,7 @@ def make_criterion(beta=None, local=False, boxes_weight_format=None):
                   weight_dict={'loss_mal': 1., 'loss_bbox': 5., 'loss_giou': 2.,
                                'loss_fgl': .15, 'loss_ddf': 1.5},
                   boxes_weight_format=boxes_weight_format)
-    return DEIMCriterion(**kwargs) if beta is None else GRVQDEIMCriterion(**kwargs, gr_vq={'beta': beta})
+    return DEIMCriterion(**kwargs) if beta is None else VQDEIMCriterion(**kwargs, vq_dense_o2o={'beta': beta})
 
 
 def make_sample(local=False, empty=False):
@@ -71,7 +71,7 @@ def make_sample(local=False, empty=False):
     return outputs, targets
 
 
-class GRVQCriterionTests(unittest.TestCase):
+class VQCriterionTests(unittest.TestCase):
     def test_beta_zero_exact_native_loss_and_gradient_all_branches(self):
         source, targets = make_sample(local=True)
         native, calibrated = make_criterion(local=True), make_criterion(beta=0., local=True)
@@ -117,9 +117,11 @@ class GRVQCriterionTests(unittest.TestCase):
         outputs, targets = make_sample()
         criterion = make_criterion(beta=.1)
         idx = [(torch.tensor([0]), torch.tensor([0]))]
-        q = gr_vq_quality(box_cxcywh_to_xyxy(outputs['pred_boxes'][0, :1]) * 8,
-                          box_cxcywh_to_xyxy(targets[0]['boxes']) * 8,
-                          targets[0]['masks'], targets[0]['visible_mask_valid'])
+        q_fg, valid = visible_quality(targets[0]['masks'], outputs['pred_boxes'][0, :1],
+                                      targets[0]['visible_mask_valid'])
+        q_iou = box_iou(box_cxcywh_to_xyxy(outputs['pred_boxes'][0, :1]),
+                        box_cxcywh_to_xyxy(targets[0]['boxes']))[0].diag()
+        q_vq = calibrate_quality(q_iou, q_fg, valid, .1)
         original_bce = F.binary_cross_entropy_with_logits
         captured = []
 
@@ -131,9 +133,9 @@ class GRVQCriterionTests(unittest.TestCase):
             loss = criterion.get_loss('mal', outputs, targets, idx, 1., supervision_branch='main')['loss_mal']
             make_criterion().get_loss('mal', outputs, targets, idx, 1.)
         target, weight = captured[0]
-        self.assertAlmostEqual(target[0, 0, 1].item(), q['q_grvq'].pow(1.5).item(), places=7)
+        self.assertAlmostEqual(target[0, 0, 1].item(), q_vq.pow(1.5).item(), places=7)
         expected = torch.zeros_like(target)
-        expected[0, 0, 1] = q['q_grvq'].pow(1.5)[0]
+        expected[0, 0, 1] = q_vq.pow(1.5)[0]
         self.assertTrue(torch.equal(target, expected))
         self.assertEqual(weight[0, 0, 1].item(), 1.)
         # Compare the *actual powered BCE targets*, not an unpowered q delta.
@@ -146,16 +148,14 @@ class GRVQCriterionTests(unittest.TestCase):
         self.assertIsNone(outputs['pred_boxes'].grad)
         self.assertTrue(torch.isfinite(outputs['pred_logits'].grad).all())
 
-    def test_giou_metadata_never_becomes_gr_vq_iou(self):
+    def test_giou_metadata_is_explicitly_rejected_not_redefined(self):
         outputs, targets = make_sample()
-        criterion = make_criterion(beta=.1, boxes_weight_format='giou')
+        with self.assertRaisesRegex(ValueError, 'true IoU'):
+            make_criterion(beta=.1, boxes_weight_format='giou')
         idx = [(torch.tensor([0]), torch.tensor([0]))]
-        actual = criterion.get_loss('mal', outputs, targets, idx, 1., supervision_branch='main',
-                                    values=torch.tensor([-.8]))['loss_mal']
-        expected = make_criterion(beta=.1).get_loss('mal', outputs, targets, idx, 1.,
-                                                   supervision_branch='main')['loss_mal']
-        self.assertTrue(torch.equal(actual, expected))
-        self.assertGreater(criterion.diagnostic_summary()['main']['q_iou_mean'], 0)
+        with self.assertRaisesRegex(ValueError, r'\[0,1\]'):
+            make_criterion(beta=.1).get_loss('mal', outputs, targets, idx, 1.,
+                                             supervision_branch='main', values=torch.tensor([-.8]))
 
     def test_dn_preserved_without_local_loss_marker(self):
         outputs, targets = make_sample(local=False)
@@ -179,7 +179,7 @@ class GRVQCriterionTests(unittest.TestCase):
                 mock.patch('torch.distributed.all_reduce') as reduce:
             summary = criterion.diagnostic_summary()
             self.assertEqual(reduce.call_count, 1)
-            self.assertEqual(reduce.call_args.args[0].shape, (4, 9))
+            self.assertEqual(reduce.call_args.args[0].shape, (4, 8))
             self.assertEqual(summary['all']['matched_positive_count'], 0)
 
     def test_invalid_mask_fallback_equals_native_positive_target(self):
@@ -194,8 +194,8 @@ class GRVQCriterionTests(unittest.TestCase):
         self.assertEqual(summary['iou_fallback_count'], 4)
         self.assertEqual(summary['valid_mask_ratio'], 0)
         self.assertEqual(summary['fallback_ratio'], 1)
-        self.assertEqual(summary['q_gr_mean'], 0)
-        self.assertEqual(summary['q_gr_near_one_ratio'], 0)
+        self.assertEqual(summary['q_fg_mean'], 0)
+        self.assertEqual(summary['q_fg_near_one_ratio'], 0)
         self.assertEqual(summary['target_delta_from_native_mal'], 0)
 
     def test_amp_box_dtype_preserves_native_iou_and_reports_actual_target_change(self):
@@ -245,40 +245,32 @@ class GRVQCriterionTests(unittest.TestCase):
         self.assertEqual(summary['all']['matched_positive_count'], 4)
         self.assertEqual(summary['all']['valid_mask_ratio'], 1)
         self.assertEqual(summary['all']['fallback_ratio'], 0)
-        self.assertEqual(summary['all']['q_gr_near_one_ratio'], 0)
+        self.assertEqual(summary['all']['q_fg_near_one_ratio'], 0)
         self.assertGreater(summary['all']['target_delta_from_native_mal'], 0)
-        self.assertLess(summary['all']['q_grvq_mean'], summary['all']['q_iou_mean'])
+        self.assertLess(summary['all']['q_vq_mean'], summary['all']['q_iou_mean'])
         self.assertEqual(criterion.diagnostics, {})
 
     def test_diagnostics_distinguish_near_neutral_valid_masks_from_fallback(self):
-        _, targets = make_sample()
-        gt = torch.tensor([[2., 2., 6., 6.]]).repeat(4, 1)
-        # Identity, genuinely near-neutral, meaningful modulation, and fallback.
-        half = 2 / .995
-        predictions = torch.tensor([[2., 2., 6., 6.],
-                                    [4 - half, 4 - half, 4 + half, 4 + half],
-                                    [1., 1., 7., 7.], [1., 1., 7., 7.]])
-        quality = gr_vq_quality(predictions, gt, targets[0]['masks'].repeat(4, 1, 1),
-                                torch.tensor([True, True, True, False]))
+        q_iou = torch.tensor([1., .8, .7, .7])
+        q_fg = torch.tensor([1., .995, 2 / 3, 2 / 3])
+        valid = torch.tensor([True, True, True, False])
+        q_vq = calibrate_quality(q_iou, q_fg, valid, .1)
         criterion = make_criterion(beta=.1)
-        criterion._record('main', quality, torch.float32)
+        criterion._record('main', q_iou, q_fg, q_vq, valid, torch.float32)
         summary = criterion.diagnostic_summary()['main']
         self.assertEqual(summary['matched_positive_count'], 4)
         self.assertEqual(summary['valid_mask_count'], 3)
         self.assertEqual(summary['valid_mask_ratio'], .75)
         self.assertEqual(summary['fallback_ratio'], .25)
-        self.assertAlmostEqual(summary['q_gr_mean'], (1 + .995 + 2 / 3) / 3, places=6)
-        self.assertAlmostEqual(summary['q_gr_near_one_ratio'], 2 / 3)
-        self.assertAlmostEqual(summary['gr_quality_saturated_ratio'], 1 / 3)
-        expected_delta = (quality['q_grvq'].pow(1.5) - quality['q_iou'].pow(1.5)).abs().mean()
+        self.assertAlmostEqual(summary['q_fg_mean'], (1 + .995 + 2 / 3) / 3, places=6)
+        self.assertAlmostEqual(summary['q_fg_near_one_ratio'], 2 / 3)
+        expected_delta = (q_vq.pow(1.5) - q_iou.pow(1.5)).abs().mean()
         self.assertAlmostEqual(summary['target_delta_from_native_mal'], expected_delta.item(), places=7)
         # Low-precision rounding can eliminate a small effect. The diagnostic
         # must expose that actual target change, not just the FP32 quality gap.
-        almost_neutral = {key: value[:1].clone() for key, value in quality.items()}
-        almost_neutral['q_iou'].fill_(.75)
-        almost_neutral['q_grvq'].fill_(.74999)
         criterion.diagnostic_summary(reset=True)
-        criterion._record('main', almost_neutral, torch.bfloat16)
+        criterion._record('main', torch.tensor([.75]), torch.tensor([1.]),
+                           torch.tensor([.74999]), torch.tensor([True]), torch.bfloat16)
         self.assertEqual(criterion.diagnostic_summary()['main']['target_delta_from_native_mal'], 0)
 
     def test_cpu_amp_forward_backward_finite(self):
@@ -296,15 +288,15 @@ class GRVQCriterionTests(unittest.TestCase):
         criterion = make_criterion(beta=.1)
         criterion(outputs, targets)
         local = {key: value.clone() for key, value in criterion.diagnostics.items()}
-        expected_mean = criterion.diagnostic_summary()['all']['q_grvq_mean']
+        expected_mean = criterion.diagnostic_summary()['all']['q_vq_mean']
         with mock.patch('torch.distributed.is_available', return_value=True), \
                 mock.patch('torch.distributed.is_initialized', return_value=True), \
                 mock.patch('torch.distributed.all_reduce', side_effect=lambda tensor, op: tensor.mul_(2)) as reduce:
             summary = criterion.diagnostic_summary()
             self.assertEqual(reduce.call_count, 1)
-            self.assertEqual(reduce.call_args.args[0].shape, (4, 9))
+            self.assertEqual(reduce.call_args.args[0].shape, (4, 8))
             self.assertEqual(summary['all']['matched_positive_count'], 8)
-            self.assertEqual(summary['all']['q_grvq_mean'], expected_mean)
+            self.assertEqual(summary['all']['q_vq_mean'], expected_mean)
         for branch in local:
             self.assertTrue(torch.equal(criterion.diagnostics[branch], local[branch]))
 

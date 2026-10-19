@@ -20,5 +20,5 @@ from .rtdetrv2_decoder import RTDETRTransformerv2
 
 from .postprocessor import PostProcessor
 from .deim_criterion import DEIMCriterion
-from .gr_vq_criterion import GRVQDEIMCriterion
+from .vq_criterion import VQDEIMCriterion
 from .deim_decoder import DEIMTransformer

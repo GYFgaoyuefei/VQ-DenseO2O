@@ -81,7 +81,7 @@ class SharedRecipeDataPipelineTests(unittest.TestCase):
         return images, targets
 
     def test_all_five_registered_recipes_at_four_schedule_stages(self):
-        for model in ('baseline_native', 'baseline_maskaware', 'gr_vq', 'li_copyblend', 'dc_sta'):
+        for model in ('baseline_native', 'baseline_maskaware', 'vq_dense_o2o', 'li_copyblend', 'dc_sta'):
             loader = self.make_loader(model)
             for epoch in (0, 10, 80, 110):
                 with self.subTest(model=model, epoch=epoch):

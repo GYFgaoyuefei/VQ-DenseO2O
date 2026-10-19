@@ -17,7 +17,7 @@ from tools.paper_v2 import run
 MATRIX = {
     "baseline_native": (False, False, False, False),
     "baseline_maskaware": (True, False, False, False),
-    "gr_vq": (True, True, False, False),
+    "vq_dense_o2o": (True, True, False, False),
     "li_copyblend": (True, False, True, False),
     "dc_sta": (True, False, False, True),
 }
@@ -25,7 +25,7 @@ MATRIX = {
 
 def switches(config):
     flags = config["innovation"]
-    return (flags["instance_mask_sync"], *(flags[name]["enabled"] for name in ("gr_vq", "li_copyblend", "dc_sta")))
+    return (flags["instance_mask_sync"], *(flags[name]["enabled"] for name in ("vq_dense_o2o", "li_copyblend", "dc_sta")))
 
 
 @pytest.mark.parametrize("name,expected", MATRIX.items())
@@ -34,7 +34,7 @@ def test_five_independent_configs_resolve_exact_switch_matrix(name, expected):
     run.verify_recipe(cfg)
     assert switches(cfg) == expected
     sync, gr, li, dc = expected
-    assert cfg["criterion"] == ("GRVQDEIMCriterion" if gr else "DEIMCriterion")
+    assert cfg["criterion"] == ("VQDEIMCriterion" if gr else "DEIMCriterion")
     assert cfg["train_dataloader"]["dataset"]["type"] == ("VisibleMaskCocoDetection" if sync else "CocoDetection")
     assert cfg["train_dataloader"]["collate_fn"]["li_copyblend"]["enabled"] == li
     assert cfg["DINOv3STAs"]["dc_sta"]["enabled"] == dc
@@ -50,7 +50,7 @@ def test_five_independent_configs_resolve_exact_switch_matrix(name, expected):
 def test_yaml_load_and_resolve_do_not_contaminate_other_experiments():
     first = run.load_resolved("baseline_native", expand_env=False)
     original = copy.deepcopy(first)
-    for model in ("gr_vq", "li_copyblend", "dc_sta", "baseline_maskaware"):
+    for model in ("vq_dense_o2o", "li_copyblend", "dc_sta", "baseline_maskaware"):
         cfg = run.load_resolved(model, expand_env=False)
         cfg["train_dataloader"]["dataset"]["transforms"]["ops"][0]["probability"] = -1
     assert first == original
@@ -61,7 +61,7 @@ def test_yaml_load_and_resolve_do_not_contaminate_other_experiments():
     assert raw == untouched
 
 
-@pytest.mark.parametrize("module", ["gr_vq", "li_copyblend"])
+@pytest.mark.parametrize("module", ["vq_dense_o2o", "li_copyblend", "dc_sta"])
 def test_mask_consumers_require_independent_mask_switch(module):
     raw = load_config(str(run.config_path("baseline_native")))
     raw["innovation"][module]["enabled"] = True
@@ -69,12 +69,12 @@ def test_mask_consumers_require_independent_mask_switch(module):
         resolve_innovation(raw, expand_env=False)
 
 
-def test_dc_sta_has_no_algorithmic_mask_dependency():
-    raw = load_config(str(run.config_path("baseline_native")))
+def test_dc_sta_shares_mask_pipeline_but_keeps_native_criterion():
+    raw = load_config(str(run.config_path("baseline_maskaware")))
     raw["innovation"]["dc_sta"]["enabled"] = True
     cfg = resolve_innovation(raw, expand_env=False)
     assert cfg["criterion"] == "DEIMCriterion"
-    assert cfg["train_dataloader"]["dataset"]["type"] == "CocoDetection"
+    assert cfg["train_dataloader"]["dataset"]["type"] == "VisibleMaskCocoDetection"
     assert cfg["DINOv3STAs"]["dc_sta"]["enabled"]
 
 
@@ -91,7 +91,7 @@ def test_missing_environment_variables_fail_explicitly(monkeypatch):
     assert cfg["DINOv3STAs"]["weights_path"] == values["DINOV3_WEIGHTS"]
     assert cfg["train_dataloader"]["dataset"]["ann_file"].startswith(values["TOMATO_DATA_ROOT"])
     monkeypatch.setenv("TOMATO_VISIBLE_MASK_TRAIN", "D:/synthetic/verified_visible_masks_vqcr.json")
-    masked = run.load_resolved("gr_vq")
+    masked = run.load_resolved("vq_dense_o2o")
     assert masked["train_dataloader"]["dataset"]["visible_mask_sidecar"] == "D:/synthetic/verified_visible_masks_vqcr.json"
     monkeypatch.setenv("TOMATO_VISIBLE_MASK_TRAIN", "D:/other_run/masks.json")
     # A resolved checkpoint/run configuration cannot drift with a later shell.
@@ -104,10 +104,10 @@ def test_combination_generator_produces_four_parseable_configs(tmp_path, monkeyp
     run.write_yaml(tmp_path / "common.yml", {"__include__": [str(original_common)]})
     monkeypatch.setattr(run, "CONFIG_DIR", tmp_path)
     run.generate_combinations()
-    assert sorted(p.stem for p in (tmp_path / "combinations").glob("*.yml")) == ["C1", "C2", "C3", "C4"]
+    assert sorted(p.stem for p in (tmp_path / "combinations").glob("*.yml")) == sorted(run.COMBINATIONS)
     for name, modules in run.COMBINATIONS.items():
         config = run.load_resolved(name, expand_env=False)
-        assert switches(config) == (True, *(key in modules for key in ("gr_vq", "li_copyblend", "dc_sta")))
+        assert switches(config) == (True, *(key in modules for key in ("vq_dense_o2o", "li_copyblend", "dc_sta")))
         run.verify_recipe(config)
 
 
@@ -134,7 +134,7 @@ def test_combination_model_and_criterion_construct_without_weights(name, modules
     cfg["eval_spatial_size"] = [128, 128]
     obj = run.create_config(cfg)
     assert (obj.model.backbone.dc_sta is not None) == ("dc_sta" in modules)
-    assert type(obj.criterion).__name__ == ("GRVQDEIMCriterion" if "gr_vq" in modules else "DEIMCriterion")
+    assert type(obj.criterion).__name__ == ("VQDEIMCriterion" if "vq_dense_o2o" in modules else "DEIMCriterion")
 
 
 def test_postprocessor_returns_verified_coco_ids_and_keeps_deploy_class_indices():
@@ -194,7 +194,7 @@ def test_output_guard_blocks_overwrite_and_foreign_or_completed_resume(tmp_path)
 
 def test_native_train_command_single_gpu_ddp_resume_and_test(monkeypatch, tmp_path):
     monkeypatch.setenv("TOMATO_DETECTOR_CHECKPOINT", "D:/synthetic/detector.pth")
-    args = run.parser().parse_args(["train", "--model", "gr_vq", "--seed", "42", "--device", "cuda:1"])
+    args = run.parser().parse_args(["train", "--model", "vq_dense_o2o", "--seed", "42", "--device", "cuda:1"])
     command = run.train_command("resolved.yml", args, tmp_path)
     assert command[command.index("--device") + 1] == "cuda:1"
     assert command[command.index("--tuning") + 1] == "D:/synthetic/detector.pth"

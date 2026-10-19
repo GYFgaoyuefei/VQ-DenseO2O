@@ -1,16 +1,17 @@
-"""GT-referenced foreground supervision for ordinary matched MAL positives."""
+"""Historical Paper v2 GR-VQ; excluded from registration and formal experiments.
+
+Kept for source inspection only. Paper v3 uses VQDEIMCriterion.
+"""
 
 import math
 
 import torch
 
-from ..core import register
 from .box_ops import box_cxcywh_to_xyxy, box_iou
 from .deim_criterion import DEIMCriterion
 from .gr_vq_quality import gr_vq_quality
 
 
-@register()
 class GRVQDEIMCriterion(DEIMCriterion):
     """Use the native criterion's matcher, branch orchestration, and MAL loss.
 

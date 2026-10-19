@@ -160,11 +160,11 @@ def test_smoke_train_missing_assets_writes_not_run_without_launch(tmp_path, monk
                       ('DINOV3_WEIGHTS', tmp_path / 'absent_dino.pth'),
                       ('TOMATO_DETECTOR_CHECKPOINT', tmp_path / 'absent_detector.pth')):
         monkeypatch.setenv(key, str(path))
-    monkeypatch.setattr(run, 'git', lambda *args: 'paper_v2.0')
+    monkeypatch.setattr(run, 'git', lambda *args: 'paper_v3.0')
     launched = []
     monkeypatch.setattr(run, 'stream_process', lambda *args, **kwargs: launched.append(args))
     destination = tmp_path / 'smoke'
-    args = run.parser().parse_args(['smoke-train', '--model', 'gr_vq', '--seed', '42',
+    args = run.parser().parse_args(['smoke-train', '--model', 'vq_dense_o2o', '--seed', '42',
                                    '--device', 'cuda:0', '--output-dir', str(destination)])
     with pytest.raises(FileNotFoundError, match='Required paths are missing'):
         run.smoke_train(args)
@@ -176,7 +176,7 @@ def test_smoke_train_missing_assets_writes_not_run_without_launch(tmp_path, monk
 
 def test_smoke_train_launch_keeps_real_batch_recipe_and_passes_native_bound(tmp_path, monkeypatch):
     cfg = run.load_resolved('li_copyblend', expand_env=False)
-    monkeypatch.setattr(run, 'git', lambda *args: 'paper_v2.0')
+    monkeypatch.setattr(run, 'git', lambda *args: 'paper_v3.0')
     monkeypatch.setattr(run, 'load_resolved', lambda *args: cfg)
     checked = []
     monkeypatch.setattr(run, 'check_assets', lambda value, **kwargs: checked.append(kwargs))
@@ -246,14 +246,15 @@ def test_native_paper_resume_does_not_reopen_backbone_initialization(monkeypatch
     solver.fit.assert_called_once()
 
 
-@pytest.mark.parametrize('gate_bias,resume', [(0., None), (.25, None), (.25, 'last.pth')])
-def test_native_training_requires_identity_gates_only_for_initialization(monkeypatch, gate_bias, resume):
+@pytest.mark.parametrize('gate_bias,resume', [(None, None), (.25, None), (.25, 'last.pth')])
+def test_native_training_requires_original_sigmoid_initialization(monkeypatch, gate_bias, resume):
     from engine.backbone.dc_sta import DCSTA
     from engine.solver._solver import BaseSolver
 
     model = DCSTA([4, 8, 8])
-    with torch.no_grad():
-        model.spatial[0].bias.fill_(gate_bias)
+    if gate_bias is not None:
+        with torch.no_grad():
+            model.spatial[0].bias.fill_(gate_bias)
     optimizer = torch.optim.AdamW(model.parameters(), lr=.001)
     loader = SimpleNamespace(shuffle=True)
     cfg = SimpleNamespace(yaml_cfg={'paper_v2': True}, resume=resume, optimizer=optimizer,
@@ -265,7 +266,7 @@ def test_native_training_requires_identity_gates_only_for_initialization(monkeyp
     monkeypatch.setattr(solver, 'load_resume_state', lambda path: None)
     monkeypatch.setattr(det_engine.dist_utils, 'warp_loader', lambda value, **kw: value)
     if gate_bias and not resume:
-        with pytest.raises(RuntimeError, match='initial gates must equal 1'):
+        with pytest.raises(RuntimeError, match='sigmoid'):
             solver.train()
     else:
         solver.train()

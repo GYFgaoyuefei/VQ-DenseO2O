@@ -11,9 +11,13 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-MODELS = ('baseline_native', 'baseline_maskaware', 'gr_vq', 'li_copyblend', 'dc_sta')
-COMBINATIONS = {'C1': ('gr_vq', 'li_copyblend'), 'C2': ('gr_vq', 'dc_sta'),
-                'C3': ('li_copyblend', 'dc_sta'), 'C4': ('gr_vq', 'li_copyblend', 'dc_sta')}
+MODELS = ('baseline_native', 'baseline_maskaware', 'vq_dense_o2o', 'li_copyblend', 'dc_sta')
+COMBINATIONS = {'vq_dense_o2o_li_copyblend': ('vq_dense_o2o', 'li_copyblend'),
+                'vq_dense_o2o_dc_sta': ('vq_dense_o2o', 'dc_sta'),
+                'li_copyblend_dc_sta': ('li_copyblend', 'dc_sta'),
+                'vq_dense_o2o_li_copyblend_dc_sta': ('vq_dense_o2o', 'li_copyblend', 'dc_sta')}
+ALL_MODELS = (*MODELS, *COMBINATIONS)
+ALGORITHM_SUITE = 'beta_select_algorithms_v1'
 CONFIG_DIR = ROOT / 'configs/tomato/paper_v2'
 
 
@@ -22,6 +26,8 @@ def git(*args):
 
 
 def config_path(model):
+    if model not in ALL_MODELS:
+        raise ValueError(f'Unknown formal model: {model}; historical GR-VQ and residual DC-STA are retired')
     return CONFIG_DIR / (f'combinations/{model}.yml' if model in COMBINATIONS else f'{model}.yml')
 
 
@@ -61,6 +67,8 @@ def generate_combinations():
 
 
 def verify_recipe(cfg):
+    if cfg.get('paper_v2', {}).get('algorithm_suite') != ALGORITHM_SUITE:
+        raise ValueError('This run is not from the new beta_select algorithm suite; old runs cannot be reused')
     assert cfg['num_classes'] == 3 and cfg['epoches'] == 120
     assert cfg['use_amp'] and cfg['use_ema']
     assert cfg['DEIMCriterion']['gamma'] == 1.5
@@ -98,9 +106,9 @@ def check_assets(cfg, evaluation=None, require_pretrained=True, train_only=False
 
 
 def preflight(args):
-    if git('branch', '--show-current') != 'paper_v2.0':
-        raise ValueError('Run Paper v2 on branch paper_v2.0')
-    for model in MODELS if args.model == 'all' else (args.model,):
+    if git('branch', '--show-current') != 'paper_v3.0':
+        raise ValueError('Run Paper v2 on branch paper_v3.0')
+    for model in ALL_MODELS if args.model == 'all' else (args.model,):
         cfg = load_resolved(model, expand_env=not args.config_only)
         verify_recipe(cfg)
         if not args.config_only:
@@ -116,7 +124,7 @@ def preflight(args):
 
 
 def output_path(args):
-    return Path(args.output_dir).resolve() if args.output_dir else ROOT / f'outputs/paper_v2/{args.model}/seed_{args.seed}'
+    return Path(args.output_dir).resolve() if args.output_dir else ROOT / f'outputs/paper_v2_beta_select_algorithms/{args.model}/seed_{args.seed}'
 
 
 def guard_output(directory, resume=None):
@@ -168,8 +176,8 @@ def stream_process(cmd, path, append=False):
 
 
 def train(args):
-    if git('branch', '--show-current') != 'paper_v2.0':
-        raise ValueError('Expected branch paper_v2.0')
+    if git('branch', '--show-current') != 'paper_v3.0':
+        raise ValueError('Expected branch paper_v3.0')
     directory = output_path(args)
     guard_output(directory, args.resume)
     if args.resume:
@@ -193,7 +201,7 @@ def train(args):
     info_path = directory / 'run_info.json'
     info = json.loads(info_path.read_text(encoding='utf-8')) if info_path.exists() else {}
     info.update(experiment=args.model, seed=args.seed, git_commit=git('rev-parse', 'HEAD'),
-                source_dirty=bool(git('status', '--porcelain')), branch='paper_v2.0',
+                source_dirty=bool(git('status', '--porcelain')), branch='paper_v3.0', algorithm_suite=ALGORITHM_SUITE,
                 pretrained={'dinov3': cfg['DINOv3STAs']['weights_path'], 'detector': cfg['tomato']['detector_checkpoint']},
                 command=cmd, started_utc=datetime.now(timezone.utc).isoformat(),
                 selection='EMA FP32 Mixed Validation AP; autocast/TF32 disabled; exact ties: earliest epoch')
@@ -274,10 +282,10 @@ def smoke_train(args):
         raise ValueError('smoke-train uses real Train data and shared pretrained initialization')
     if not args.device.startswith('cuda'):
         raise ValueError('Real training batch acceptance requires CUDA')
-    if git('branch', '--show-current') != 'paper_v2.0':
-        raise ValueError('Expected branch paper_v2.0')
+    if git('branch', '--show-current') != 'paper_v3.0':
+        raise ValueError('Expected branch paper_v3.0')
     directory = (Path(args.output_dir).resolve() if args.output_dir else
-                 ROOT / f'outputs/paper_v2_checks/real_train/{args.model}/seed_{args.seed}_{datetime.now(timezone.utc):%Y%m%dT%H%M%S_%f}')
+                 ROOT / f'outputs/paper_v2_beta_select_algorithms/checks/real_train/{args.model}/seed_{args.seed}_{datetime.now(timezone.utc):%Y%m%dT%H%M%S_%f}')
     guard_output(directory)
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / 'train_smoke_preflight.json'
@@ -304,12 +312,7 @@ def smoke_train(args):
 
 def evaluate(args):
     directory = output_path(args)
-    import yaml
-    saved = directory / 'config_resolved.yml'
-    cfg = yaml.safe_load(saved.read_text(encoding='utf-8')) if saved.exists() else load_resolved(args.model)
-    args.checkpoint = Path(args.checkpoint or directory / 'best.pth').resolve()
-    if not args.checkpoint.is_file():
-        raise FileNotFoundError(args.checkpoint)
+    cfg, args.checkpoint, _ = benchmark_binding(args)
     split = 'test' if args.command == 'evaluate-test' else 'validation'
     if split == 'test':
         root = Path(os.environ['TOMATO_DATA_ROOT'])
@@ -328,7 +331,7 @@ def evaluate(args):
 
 
 def efficiency_path(args):
-    return Path(args.efficiency_dir).resolve() if args.efficiency_dir else ROOT / 'outputs/paper_v2/efficiency'
+    return Path(args.efficiency_dir).resolve() if args.efficiency_dir else ROOT / 'outputs/paper_v2_beta_select_algorithms/efficiency'
 
 
 def benchmark_binding(args):
@@ -345,7 +348,7 @@ def benchmark_binding(args):
     expected = load_resolved(args.model, expand_env=False)['innovation']
     actual = cfg['innovation']
     if (actual['instance_mask_sync'] != expected['instance_mask_sync'] or
-        any(actual[key]['enabled'] != expected[key]['enabled'] for key in ('gr_vq', 'li_copyblend', 'dc_sta'))):
+        any(actual[key]['enabled'] != expected[key]['enabled'] for key in ('vq_dense_o2o', 'li_copyblend', 'dc_sta'))):
         raise ValueError('Efficiency model name does not match saved algorithm switches')
     if cfg.get('eval_spatial_size') != [640, 640] or cfg['PostProcessor']['num_top_queries'] != 300:
         raise ValueError('Efficiency requires native 640 spatial size and tensor postprocessor top-k=300')
@@ -367,10 +370,12 @@ def benchmark(args):
     import torch
     from tools.paper_v2.efficiency_protocol import protocol
     from tools.paper_v2.efficiency_measure import measure
+    from tools.paper_v2.efficiency_summary import check_campaign
     if args.nproc_per_node != 1:
         raise ValueError('Efficiency runs in one process on one GPU; do not use torchrun')
     torch.set_num_threads(args.threads)
     directory = efficiency_path(args)
+    check_campaign(directory)
     path = directory / 'raw' / args.model / f'seed_{args.seed}' / 'efficiency.json'
     if path.exists():
         raise FileExistsError(f'Efficiency result already exists: {path}; use a new --efficiency-dir for a new campaign')
@@ -391,7 +396,7 @@ def benchmark(args):
     stat = checkpoint.stat()
     if (stat.st_size, stat.st_mtime_ns) != (checkpoint_stat.st_size, checkpoint_stat.st_mtime_ns):
         raise ValueError('Selected checkpoint changed during efficiency measurement; refusing to save misleading provenance')
-    report = {'schema': 'paper_v2_efficiency_record_v1', 'status': 'MEASURED',
+    report = {'schema': 'paper_v2_efficiency_record_v1', 'status': 'MEASURED', 'algorithm_suite': ALGORITHM_SUITE,
               'protocol': protocol(), 'model': args.model, 'seed': args.seed,
               'epochs': cfg['epoches'], 'selected_epoch_zero_based': selected,
               'checkpoint': {'path': str(checkpoint), 'size_bytes': stat.st_size,
@@ -419,10 +424,12 @@ def ap_results(args):
 
 
 def summarize(args):
-    directory = Path(args.output_dir) if args.output_dir else ROOT / 'outputs/paper_v2'
+    directory = Path(args.output_dir) if args.output_dir else ROOT / 'outputs/paper_v2_beta_select_algorithms'
     rows = []
     for path in sorted(directory.glob('*/seed_*/run_info.json')):
         info = json.loads(path.read_text(encoding='utf-8'))
+        if info.get('algorithm_suite') != ALGORITHM_SUITE:
+            raise ValueError(f'Historical run cannot enter the new experiment summary: {path}')
         rows.append({'model': info['experiment'], 'seed': info['seed'],
                      'best_validation_ap': info.get('best_validation_ap', ''),
                      'best_validation_epoch': info.get('best_validation_epoch', ''),
@@ -439,7 +446,7 @@ def summarize(args):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command', choices=['preflight', 'smoke', 'smoke-train', 'train', 'validate', 'evaluate-test', 'benchmark', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'generate-combinations', 'commands'])
+    p.add_argument('command', choices=['preflight', 'smoke', 'smoke-train', 'train', 'validate', 'evaluate-test', 'benchmark', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'audit-configs', 'generate-combinations', 'commands'])
     p.add_argument('--model', choices=[*MODELS, *COMBINATIONS, 'all'], default='all')
     p.add_argument('--seed', type=int, choices=[0, 42, 3407], default=42)
     p.add_argument('--device', default='cuda:0')
@@ -453,10 +460,10 @@ def parser():
     p.add_argument('--threads', type=int, default=2)
     p.add_argument('--smoke-steps', type=int, default=3, help='smoke-train only: 1-10 actual Train batches')
     p.add_argument('--smoke-epoch', type=int, default=0, help='smoke-train only: recipe epoch; 10 probes the active CopyBlend stage')
-    p.add_argument('--efficiency-dir', help='Efficiency campaign directory; defaults to outputs/paper_v2/efficiency')
+    p.add_argument('--efficiency-dir', help='Efficiency campaign directory; defaults to outputs/paper_v2_beta_select_algorithms/efficiency')
     p.add_argument('--ap-csv', help='Explicit AP-by-seed CSV in percent units, with Model and Seed columns')
     p.add_argument('--ap-split', choices=['test', 'validation'], default='test', help='AP report split; never changes checkpoint selection')
-    p.add_argument('--ap-dir', help='One-split AP campaign directory; default outputs/paper_v2/ap/<split>')
+    p.add_argument('--ap-dir', help='One-split AP campaign directory; default outputs/paper_v2_beta_select_algorithms/ap/<split>')
     p.add_argument('--runs-dir', help='AP only: parent of <model>/seed_<seed> completed run directories')
     p.add_argument('--ap-models', nargs='+', choices=[*MODELS, *COMBINATIONS], help='AP only: default five independent models; may include C1-C4')
     p.add_argument('--ap-seeds', nargs='+', type=int, choices=[0, 42, 3407], default=[0, 42, 3407], help='AP evaluation seeds; aggregates still require all three')
@@ -472,13 +479,16 @@ def main():
         raise ValueError('nproc-per-node must be positive')
     if args.threads < 1:
         raise ValueError('threads must be positive')
-    if args.command not in ('preflight', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'generate-combinations', 'commands') and args.model == 'all':
+    if args.command not in ('preflight', 'summarize', 'summarize-efficiency', 'evaluate-ap', 'summarize-ap', 'audit-configs', 'generate-combinations', 'commands') and args.model == 'all':
         raise ValueError('Select one --model')
     if args.command == 'generate-combinations':
         generate_combinations()
+    elif args.command == 'audit-configs':
+        from tools.paper_v2.config_audit import audit
+        audit()
     elif args.command == 'commands':
         for seed in (42, 0, 3407):
-            for model in MODELS:
+            for model in ALL_MODELS:
                 print(f'bash scripts/paper_v2/autodl/train_one.sh {model} {seed} cuda:0')
     else:
         {'preflight': preflight, 'smoke': smoke, 'smoke-train': smoke_train, 'train': train, 'validate': evaluate,

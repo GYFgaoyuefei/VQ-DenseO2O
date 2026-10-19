@@ -7,13 +7,13 @@ import statistics
 import pytest
 
 from tools.paper_v2.ap_summary import REQUIRED_AP, summarize, validate_record
-from tools.paper_v2.efficiency_protocol import AP_COLUMNS, MODELS, SEEDS
+from tools.paper_v2.efficiency_protocol import ALGORITHM_SUITE, AP_COLUMNS, MODELS, SEEDS
 from tools.paper_v2.efficiency_summary import _read_ap
 
 
 def make_record(seed=0, model='baseline_native', value=40.0, split='test'):
     return {
-        'schema': 'paper_v2_ap_record_v1', 'status': 'COMPLETE', 'model': model,
+        'schema': 'paper_v2_ap_record_v1', 'algorithm_suite': 'beta_select_algorithms_v1', 'status': 'COMPLETE', 'model': model,
         'seed': seed, 'split': split, 'selected_epoch_zero_based': 76,
         'metrics': {column: value + index for index, column in enumerate(AP_COLUMNS)},
         'image_counts': {'mixed': 40, 'natural': 10, 'artificial': 10,
@@ -71,18 +71,20 @@ def test_partial_campaign_writes_successes_and_excludes_failed_cache_offline(tmp
     from tools.paper_v2 import ap_evaluate, ap_workflow, run
 
     for seed in SEEDS:
-        write_record(tmp_path, make_record(seed, model='gr_vq'))
-    stale = tmp_path / 'raw/gr_vq/seed_42/metrics.json'
+        write_record(tmp_path, make_record(seed, model='vq_dense_o2o'))
+    (tmp_path / 'evaluation_attempts.json').write_text(json.dumps({
+        'algorithm_suite': ALGORITHM_SUITE, 'split': 'test', 'runs': []}))
+    stale = tmp_path / 'raw/vq_dense_o2o/seed_42/metrics.json'
     stale.write_text('{"invalid cache": true}')
 
     def reusable(**kwargs):
         if kwargs['seed'] == 42:
             raise ValueError('Checkpoint changed')
-        return make_record(kwargs['seed'], model='gr_vq')
+        return make_record(kwargs['seed'], model='vq_dense_o2o')
 
     monkeypatch.setattr(ap_evaluate, 'reusable_record', reusable)
     monkeypatch.setattr(ap_evaluate, 'evaluate_run', lambda **kw: pytest.fail('Do not rerun cached models'))
-    args = run.parser().parse_args(['evaluate-ap', '--model', 'gr_vq', '--ap-dir', str(tmp_path)])
+    args = run.parser().parse_args(['evaluate-ap', '--model', 'vq_dense_o2o', '--ap-dir', str(tmp_path)])
     with pytest.raises(RuntimeError, match='1 AP runs failed; partial CSV reports were written'):
         ap_workflow.evaluate_and_summarize(args)
     assert stale.read_text() == '{"invalid cache": true}'
@@ -91,18 +93,18 @@ def test_partial_campaign_writes_successes_and_excludes_failed_cache_offline(tmp
     assert summary['Status'] == 'FAIL' and summary['measured_seed_count'] == '2'
     assert all(summary[column] == '' for column in AP_COLUMNS)
     # The offline entrypoint must retain the exact exclusion, without inference.
-    result = summarize(tmp_path, models=['gr_vq'])
+    result = summarize(tmp_path, models=['vq_dense_o2o'])
     assert result['failed_model_seed_count'] == 1
-    assert result['model_status']['gr_vq']['failed_seeds'] == [42]
+    assert result['model_status']['vq_dense_o2o']['failed_seeds'] == [42]
     assert result['excluded_runs'][0]['reason'] == 'ValueError: Checkpoint changed'
     assert result['illumination_columns']['Sodium-light AP (%)'] == '钠黄光'
     assert len(read_csv(tmp_path, 'ap_by_seed.csv')) == 2
 
 
 def test_existing_fifteen_run_failure_ledger_publishes_ten_valid_results(tmp_path):
-    failed = {('baseline_maskaware', 42), ('gr_vq', 42), ('gr_vq', 3407),
+    failed = {('baseline_maskaware', 42), ('vq_dense_o2o', 42), ('vq_dense_o2o', 3407),
               ('li_copyblend', 0), ('dc_sta', 0)}
-    attempts = {'split': 'test', 'status': 'FAIL', 'runs': []}
+    attempts = {'algorithm_suite': 'beta_select_algorithms_v1', 'split': 'test', 'status': 'FAIL', 'runs': []}
     for model in MODELS[:5]:
         for seed in SEEDS:
             bad = (model, seed) in failed
@@ -128,7 +130,7 @@ def test_existing_fifteen_run_failure_ledger_publishes_ten_valid_results(tmp_pat
 def test_unsuccessful_attempt_never_imports_existing_raw_cache(tmp_path, status):
     write_record(tmp_path, make_record())
     (tmp_path / 'evaluation_attempts.json').write_text(json.dumps({
-        'split': 'test', 'status': status, 'runs': [
+        'algorithm_suite': 'beta_select_algorithms_v1', 'split': 'test', 'status': status, 'runs': [
             {'model': 'baseline_native', 'seed': 0, 'status': status}]}))
     result = summarize(tmp_path, models=['baseline_native'])
     assert result['measured_model_seed_count'] == 0
@@ -139,7 +141,7 @@ def test_unsuccessful_attempt_never_imports_existing_raw_cache(tmp_path, status)
 def test_attempt_split_mismatch_cannot_discard_other_split_evidence(tmp_path):
     write_record(tmp_path, make_record())
     (tmp_path / 'evaluation_attempts.json').write_text(json.dumps({
-        'split': 'validation', 'runs': []}))
+        'algorithm_suite': 'beta_select_algorithms_v1', 'split': 'validation', 'runs': []}))
     with pytest.raises(ValueError, match='attempt split'):
         summarize(tmp_path, models=['baseline_native'])
     assert not (tmp_path / 'ap_by_seed.csv').exists()
@@ -238,16 +240,16 @@ def test_absent_coco_size_bin_is_null_without_making_five_ap_incomplete(tmp_path
 
 
 def test_default_includes_nine_models_and_requested_scope_excludes_other_raw(tmp_path):
-    for model in ('baseline_native', 'gr_vq'):
+    for model in ('baseline_native', 'vq_dense_o2o'):
         for seed in SEEDS:
             write_record(tmp_path, make_record(seed, model=model))
     all_result = summarize(tmp_path)
     assert all_result['status'] == 'INCOMPLETE'
     assert [row['Model'] for row in read_csv(tmp_path, 'ap_summary.csv')] == list(MODELS)
-    result = summarize(tmp_path, models=['gr_vq'])
+    result = summarize(tmp_path, models=['vq_dense_o2o'])
     assert result['status'] == 'COMPLETE'
-    assert result['models'] == ['gr_vq']
-    assert all(row['Model'] == 'gr_vq' for row in read_csv(tmp_path, 'ap_by_seed.csv'))
+    assert result['models'] == ['vq_dense_o2o']
+    assert all(row['Model'] == 'vq_dense_o2o' for row in read_csv(tmp_path, 'ap_by_seed.csv'))
     assert (tmp_path / 'raw/baseline_native/seed_0/metrics.json').exists()
 
 
@@ -333,7 +335,35 @@ def test_empty_light_group_is_incomplete_without_discarding_other_metrics(tmp_pa
     assert result['model_status']['baseline_native']['missing_metrics_by_seed']['0'] == ['Natural AP (%)']
 
 
-@pytest.mark.parametrize('models', [[], ['unknown'], ['gr_vq', 'gr_vq']])
+@pytest.mark.parametrize('models', [[], ['unknown'], ['vq_dense_o2o', 'vq_dense_o2o']])
 def test_invalid_model_scope_rejected(tmp_path, models):
     with pytest.raises(ValueError, match='models must'):
         summarize(tmp_path, models=models)
+
+
+@pytest.mark.parametrize('evidence', ['unbound_raw', 'unbound_tables', 'mixed_markers'])
+def test_unbound_ap_exports_cannot_be_relabelled_as_new_suite(tmp_path, evidence):
+    if evidence != 'unbound_tables':
+        record = make_record()
+        record.pop('algorithm_suite')
+        write_record(tmp_path, record)
+    if evidence == 'mixed_markers':
+        (tmp_path / 'ap_protocol.json').write_text(json.dumps({
+            'algorithm_suite': ALGORITHM_SUITE, 'split': 'test'}))
+        (tmp_path / 'evaluation_attempts.json').write_text(json.dumps({'split': 'test', 'runs': []}))
+    (tmp_path / 'ap_summary.csv').write_text('historical AP summary')
+    before = {str(path.relative_to(tmp_path)): path.read_bytes()
+              for path in tmp_path.rglob('*') if path.is_file()}
+    with pytest.raises(ValueError, match='Historical or unbound AP'):
+        summarize(tmp_path)
+    after = {str(path.relative_to(tmp_path)): path.read_bytes()
+             for path in tmp_path.rglob('*') if path.is_file()}
+    assert before == after
+
+
+def test_existing_protocol_split_cannot_be_rewritten_with_no_raw_records(tmp_path):
+    summarize(tmp_path, split='validation')
+    before = (tmp_path / 'ap_protocol.json').read_bytes()
+    with pytest.raises(ValueError, match='AP protocol split'):
+        summarize(tmp_path, split='test')
+    assert (tmp_path / 'ap_protocol.json').read_bytes() == before

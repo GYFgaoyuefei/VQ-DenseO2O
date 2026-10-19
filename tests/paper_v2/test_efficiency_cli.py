@@ -9,7 +9,7 @@ from tools.paper_v2 import run
 from tools.paper_v2.efficiency_protocol import MODELS, PAPER_COLUMNS, protocol, validate_protocol
 
 
-def saved_run(tmp_path, model='gr_vq', seed=42):
+def saved_run(tmp_path, model='vq_dense_o2o', seed=42):
     args = run.parser().parse_args(['benchmark', '--model', model, '--seed', str(seed),
                                    '--output-dir', str(tmp_path / 'run'),
                                    '--efficiency-dir', str(tmp_path / 'efficiency')])
@@ -48,7 +48,7 @@ def test_binding_rejects_cross_run_or_nonstandard_inputs(tmp_path, fault, match)
     elif fault == 'unfinished':
         (directory / 'completed.json').unlink()
     elif fault == 'switches':
-        cfg['innovation']['gr_vq']['enabled'] = False
+        cfg['innovation']['vq_dense_o2o']['enabled'] = False
     elif fault == 'size':
         cfg['eval_spatial_size'] = [128, 128]
     elif fault == 'topk':
@@ -119,7 +119,7 @@ def test_benchmark_constructs_only_inference_components_and_prevents_overwrite(t
     monkeypatch.setattr(run, 'summarize_efficiency', lambda args: calls.append('summarize'))
     run.benchmark(args)
     assert calls == ['construct_inference', 'load_ema', 'measure', 'summarize']
-    path = run.efficiency_path(args) / 'raw/gr_vq/seed_42/efficiency.json'
+    path = run.efficiency_path(args) / 'raw/vq_dense_o2o/seed_42/efficiency.json'
     record = json.loads(path.read_text())
     assert record['protocol'] == protocol() and record['epochs'] == 120
     assert record['selected_epoch_zero_based'] == 13 and record['checkpoint']['model_state'] == 'ema'
@@ -150,3 +150,16 @@ def test_changed_checkpoint_during_measurement_is_not_saved(tmp_path, monkeypatc
     with pytest.raises(ValueError, match='checkpoint changed'):
         run.benchmark(args)
     assert not run.efficiency_path(args).exists()
+
+
+def test_benchmark_rejects_historical_destination_before_inference(tmp_path, monkeypatch):
+    args, _, _ = saved_run(tmp_path)
+    destination = run.efficiency_path(args)
+    destination.mkdir()
+    report = destination / 'efficiency_protocol.json'
+    report.write_text('{}', encoding='utf-8')
+    monkeypatch.setattr(run, 'benchmark_binding', lambda _: pytest.fail('must reject before inference'))
+    with pytest.raises(ValueError, match='Historical efficiency campaign'):
+        run.benchmark(args)
+    assert report.read_text() == '{}'
+    assert not (destination / 'raw').exists()

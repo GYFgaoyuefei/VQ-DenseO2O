@@ -39,7 +39,7 @@ def test_real_d1_optimizer_and_ema_include_every_gate_parameter():
     result = audit_dc_training(obj.model, obj.optimizer, obj.ema)
     assert result['status'] == 'PASS'
     assert result['parameter_count'] == 18
-    assert result['identity_initialized']
+    assert result['near_identity_initialized']
     assert all(name.startswith('backbone.dc_sta.') for name in result['parameter_names'])
     assert result['optimizer_coverage_ok'] and result['ema_coverage_ok']
 
@@ -57,9 +57,9 @@ def test_gradient_audit_allows_first_step_zeros_and_detects_second_step_signal()
     gate_backward(model)
     second = audit_dc_training(model, optimizer, ema, check_gradients=True)
     assert second['status'] == 'PASS'
-    assert not second['identity_initialized']
+    assert not second['near_identity_initialized']
     assert not second['gradient_zero']
-    assert ema.module.dc_sta._gate_architecture.item() == 1
+    assert ema.module.dc_sta._gate_architecture.item() == 2
     assert ema.module.dc_sta._gate_architecture.dtype == torch.int64
     assert not torch.equal(ema.module.dc_sta.channel[0][-1].weight,
                            torch.zeros_like(ema.module.dc_sta.channel[0][-1].weight))
@@ -98,7 +98,7 @@ def test_gradient_audit_detects_missing_nonfinite_or_dead_signal(damage):
     assert result['status'] == 'FAIL' and not result['gradients_ok']
 
 
-@pytest.mark.parametrize('marker', [None, torch.tensor(0), torch.tensor(1.), torch.tensor([1])])
+@pytest.mark.parametrize('marker', [None, torch.tensor(1), torch.tensor(2.), torch.tensor([2])])
 @pytest.mark.parametrize('strict', [False, True])
 def test_direct_checkpoint_load_rejects_unmarked_or_wrong_gate_architecture(marker, strict):
     module = DCSTA([4, 8, 8])
@@ -107,11 +107,11 @@ def test_direct_checkpoint_load_rejects_unmarked_or_wrong_gate_architecture(mark
         del state['_gate_architecture']
     else:
         state['_gate_architecture'] = marker
-    with pytest.raises(RuntimeError, match='Historical sigmoid'):
+    with pytest.raises(RuntimeError, match='Residual-tanh'):
         module.load_state_dict(state, strict=strict)
 
 
-def test_residual_tanh_checkpoint_roundtrip_includes_model_and_ema():
+def test_restored_sigmoid_checkpoint_roundtrip_includes_model_and_ema():
     model, optimizer, ema = setup_training()
     gate_backward(model)
     optimizer.step()
@@ -128,17 +128,17 @@ def test_residual_tanh_checkpoint_roundtrip_includes_model_and_ema():
 def test_tuning_rejects_legacy_keys_before_shape_matching_can_drop_them(tmp_path, monkeypatch):
     model = SmallDetector()
     legacy = {'stem.weight': model.stem.weight.detach(), 'stem.bias': model.stem.bias.detach(),
-              'dc_sta.legacy_sigmoid_head.weight': torch.randn(1, 2)}
+              'dc_sta.legacy_residual_head.weight': torch.randn(1, 2)}
     path = tmp_path / 'legacy.pth'
     torch.save({'ema': {'module': legacy}}, path)
     solver = BaseSolver.__new__(BaseSolver)
     solver.model = model
     monkeypatch.setattr(solver, '_matched_state', lambda *_: pytest.fail('must validate before filtering'))
-    with pytest.raises(RuntimeError, match='Historical sigmoid'):
+    with pytest.raises(RuntimeError, match='Residual-tanh'):
         solver.load_tuning_state(str(path))
 
 
-def test_native_pretrained_tuning_without_gates_keeps_new_gates_at_identity(tmp_path):
+def test_native_pretrained_tuning_without_gates_keeps_new_gates_at_beta_initialization(tmp_path):
     model = SmallDetector()
     native = {key: torch.full_like(value, .25) for key, value in model.state_dict().items()
               if not key.startswith('dc_sta.')}
@@ -149,11 +149,11 @@ def test_native_pretrained_tuning_without_gates_keeps_new_gates_at_identity(tmp_
     solver.load_tuning_state(str(path))
     assert torch.equal(model.stem.weight, torch.full_like(model.stem.weight, .25))
     result = audit_dc_training(model, torch.optim.AdamW(model.parameters()), ModelEMA(model))
-    assert result['status'] == 'PASS' and result['identity_initialized']
+    assert result['status'] == 'PASS' and result['near_identity_initialized']
 
 
-def test_five_configs_share_detector_initialization_and_rng_for_same_seed():
-    # Existing adapter identity tests cover gate math; this additionally checks
+def test_all_configs_share_detector_initialization_and_rng_for_same_seed():
+    # Existing adapter reference tests cover gate math; this additionally checks
     # the later encoder/class heads, whose RNG must not shift when adding gates.
     with torch.random.fork_rng(devices=[]):
         baseline = None

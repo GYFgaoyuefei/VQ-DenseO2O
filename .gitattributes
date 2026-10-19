@@ -1,0 +1,2 @@
+# AutoDL wrappers must remain executable by Bash after a Windows checkout.
+scripts/paper_v2/**/*.sh text eol=lf

@@ -11,4 +11,4 @@ export PYTHON="python"
 export NPROC_PER_NODE=1
 # Optional: export CUDA_VISIBLE_DEVICES=0,1,2,3
 # Optional resume for train_one.sh only:
-# export RESUME="/root/autodl-tmp/DEIMv2-new/outputs/paper_v2/gr_vq/seed_42/last.pth"
+# export RESUME="/root/autodl-tmp/DEIMv2-new/outputs/paper_v2_beta_select_algorithms/vq_dense_o2o/seed_42/last.pth"

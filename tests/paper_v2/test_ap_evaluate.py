@@ -119,6 +119,21 @@ def test_selected_ema_infers_once_and_reuses_predictions_for_all_ap(selected_run
         ap_evaluate.evaluate_run(**item.args)
 
 
+def test_direct_api_rejects_historical_campaign_before_opening_resources(selected_run, monkeypatch):
+    item = selected_run
+    item.output.mkdir()
+    marker = item.output / 'ap_protocol.json'
+    marker.write_text(json.dumps({'schema': 'paper_v2_ap_summary_v1', 'split': 'test'}))
+    csv = item.output / 'ap_summary.csv'
+    csv.write_text('old measured summary')
+    before = {path.name: path.read_bytes() for path in (marker, csv)}
+    monkeypatch.setattr(ap_evaluate, '_binding', lambda *a, **kw: pytest.fail('Do not open data or checkpoints'))
+    with pytest.raises(ValueError, match='Historical or unbound AP campaign'):
+        ap_evaluate.evaluate_run(**item.args)
+    assert {path.name: path.read_bytes() for path in item.output.iterdir()} == before
+    assert item.detector.calls == item.seen_cfg == []
+
+
 def test_signed_native_boxes_are_saved_and_diagnosed_without_filtering(selected_run, monkeypatch):
     item = selected_run
     original = item.detector.forward
@@ -147,13 +162,13 @@ def test_rejects_unbound_run_before_model_construction(selected_run, change):
         if change == 'recipe':
             item.cfg['epoches'] = 10
         else:
-            item.cfg['innovation']['gr_vq']['enabled'] = True
+            item.cfg['innovation']['vq_dense_o2o']['enabled'] = True
         (item.directory / 'config_resolved.yml').write_text(yaml.safe_dump(item.cfg), encoding='utf-8')
     elif change in ('precision', 'epoch'):
         item.selection.update({'precision': 'FP16'} if change == 'precision' else {'epoch': 120})
         (item.directory / 'selection.json').write_text(json.dumps(item.selection), encoding='utf-8')
     else:
-        item.args[change] = 'gr_vq' if change == 'model' else 0
+        item.args[change] = 'vq_dense_o2o' if change == 'model' else 0
     with pytest.raises(ValueError):
         ap_evaluate.evaluate_run(**item.args)
     assert item.seen_cfg == []
