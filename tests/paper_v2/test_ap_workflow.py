@@ -78,12 +78,40 @@ def test_invalid_cached_result_is_not_overwritten_or_published(tmp_path, monkeyp
 
     monkeypatch.setattr(ap_evaluate, 'reusable_record', stale)
     monkeypatch.setattr(ap_evaluate, 'evaluate_run', lambda **kw: pytest.fail('Must not overwrite'))
-    monkeypatch.setattr(ap_workflow, 'summarize', lambda args: pytest.fail('Must not publish stale table'))
     with pytest.raises(RuntimeError, match='1 AP runs failed'):
         ap_workflow.evaluate_and_summarize(args)
     assert json.loads(cached.read_text()) == {'existing': 'preserve'}
     report = json.loads((tmp_path / 'ap/evaluation_attempts.json').read_text())
     assert report['status'] == 'FAIL' and 'Checkpoint changed' in report['runs'][0]['reason']
+    protocol = json.loads((tmp_path / 'ap/ap_protocol.json').read_text(encoding='utf-8'))
+    assert protocol['status'] == 'FAIL' and protocol['measured_model_seed_count'] == 0
+    assert (tmp_path / 'ap/ap_by_seed.csv').is_file()
+    assert (tmp_path / 'ap/ap_summary.csv').is_file()
+
+
+def test_one_seed_repair_keeps_other_unresolved_failures_excluded(tmp_path, monkeypatch):
+    from tools.paper_v2 import ap_evaluate
+    from tools.paper_v2.ap_summary import load_exclusions
+    args = arguments(tmp_path, '--ap-seeds', '42')
+    ap_dir = tmp_path / 'ap'
+    cached = ap_dir / 'raw/gr_vq/seed_42/metrics.json'
+    cached.parent.mkdir(parents=True)
+    cached.write_text('{}')
+    # This is the old campaign format, without the new excluded_runs field.
+    (ap_dir / 'evaluation_attempts.json').write_text(json.dumps({
+        'split': 'test', 'status': 'FAIL', 'runs': [
+            {'model': 'gr_vq', 'seed': 42, 'status': 'FAIL', 'reason': 'Old failure'},
+            {'model': 'baseline_native', 'seed': 0, 'status': 'FAIL', 'reason': 'Unrepaired stale cache'},
+        ]}))
+    monkeypatch.setattr(ap_evaluate, 'reusable_record', lambda **kw: {'status': 'COMPLETE'})
+    captured = []
+    monkeypatch.setattr(ap_workflow, 'summarize', lambda summary_args:
+                        captured.append(ap_workflow.selected_models(summary_args)))
+    ap_workflow.evaluate_and_summarize(args)
+    assert captured == [['baseline_native', 'gr_vq']]
+    excluded = load_exclusions(ap_dir, 'test')
+    assert list(excluded) == [('baseline_native', 0)]
+    assert excluded[('baseline_native', 0)]['reason'] == 'Unrepaired stale cache'
 
 
 def test_one_seed_repair_keeps_existing_other_models_in_shared_summary(tmp_path, monkeypatch):

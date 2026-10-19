@@ -47,6 +47,7 @@ def summarize(args):
 
 def evaluate_and_summarize(args):
     from .ap_evaluate import evaluate_run, reusable_record
+    from .ap_summary import load_exclusions
 
     if args.output_dir or args.resume or args.checkpoint or args.synthetic:
         raise ValueError('AP evaluation uses each completed run best.pth; use --runs-dir and --ap-dir')
@@ -63,15 +64,22 @@ def evaluate_and_summarize(args):
         mapping = json.loads(Path(args.illumination_map).read_text(encoding='utf-8'))
         if not isinstance(mapping, dict):
             raise ValueError('--illumination-map must contain a JSON object mapping image IDs or filenames to light labels')
+    exclusions = load_exclusions(output, args.ap_split)
     attempts = {'split': args.ap_split, 'models': models, 'seeds': seeds,
                 'started_utc': datetime.now(timezone.utc).isoformat(), 'status': 'RUNNING', 'runs': []}
     attempt_path = output / 'evaluation_attempts.json'
+
+    def save_attempts():
+        attempts['excluded_runs'] = list(exclusions.values())
+        _write_json(attempt_path, attempts)
+
     for model in models:
         for seed in seeds:
             run_dir = runs / model / f'seed_{seed}'
             row = {'model': model, 'seed': seed, 'status': 'RUNNING'}
             attempts['runs'].append(row)
-            _write_json(attempt_path, attempts)
+            exclusions[(model, seed)] = row.copy()
+            save_attempts()
             print(f'AP {args.ap_split}: {model} seed={seed}', flush=True)
             try:
                 kwargs = dict(run_dir=run_dir, model=model, seed=seed, output_dir=output,
@@ -89,21 +97,26 @@ def evaluate_and_summarize(args):
                         row.update(status=record['status'], reused=False)
             except (ValueError, OSError, RuntimeError, KeyError, TypeError, AssertionError) as error:
                 row.update(status='FAIL', reason=f'{type(error).__name__}: {error}')
-            _write_json(attempt_path, attempts)
+            if row['status'] in ('COMPLETE', 'INCOMPLETE'):
+                exclusions.pop((model, seed), None)
+            else:
+                exclusions[(model, seed)] = row.copy()
+            save_attempts()
             print(f"  {row['status']}: {row.get('reason', 'cached result' if row.get('reused') else 'evaluation recorded')}", flush=True)
     failures = [row for row in attempts['runs'] if row['status'] == 'FAIL']
     attempts['status'] = ('FAIL' if failures else 'COMPLETE' if
                           all(row['status'] == 'COMPLETE' for row in attempts['runs']) else 'INCOMPLETE')
     attempts['finished_utc'] = datetime.now(timezone.utc).isoformat()
-    _write_json(attempt_path, attempts)
-    if failures:
-        # Preserve successful raw records, but never publish a mixed/stale table
-        # when a cached record or current evaluation failed verification.
-        raise RuntimeError(f'{len(failures)} AP runs failed; see {attempt_path}. Successful raw records are retained.')
+    save_attempts()
     # A one-model/one-seed repair must not shrink the shared tables and hide
     # other models whose raw measurements already belong to this campaign.
     summary_args = copy.copy(args)
     summary_args.model = 'all'
     summary_args.ap_models = [model for model in MODELS if model in models or
-                             (output / 'raw' / model).is_dir()]
-    return summarize(summary_args)
+                             (output / 'raw' / model).is_dir() or
+                             any(key[0] == model for key in exclusions)]
+    result = summarize(summary_args)
+    if failures:
+        raise RuntimeError(f'{len(failures)} AP runs failed; partial CSV reports were written to {output}. '
+                           f'See {attempt_path}. Failed or unverified records are excluded.')
+    return result

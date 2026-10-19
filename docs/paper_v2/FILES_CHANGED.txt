@@ -20,6 +20,7 @@ docs/paper_v2/08_训练前最终检查报告.md
 docs/paper_v2/09_Efficiency_Evaluation_Protocol.md
 docs/paper_v2/10_Test_AP计算与三seed汇总.md
 docs/paper_v2/FILES_CHANGED.txt
+docs/paper_v2/ap_failure_recovery_test_results.xml
 docs/paper_v2/ap_regression_test_results.xml
 docs/paper_v2/efficiency_test_results.xml
 docs/paper_v2/final_acceptance_test_results.xml

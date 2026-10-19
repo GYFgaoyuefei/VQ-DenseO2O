@@ -119,9 +119,53 @@ def _signature(record):
             record['tool']['name'], record['tool']['version'])
 
 
-def _load_records(output_dir, split, models):
+def load_exclusions(output_dir, split):
+    """Keep failed/unverified runs out of reports, including offline summaries.
+
+    ``excluded_runs`` retains unresolved failures across one-seed retries. The
+    current attempt's rows supersede it, so a successful retry clears its key.
+    """
+    path = Path(output_dir) / 'evaluation_attempts.json'
+    if not path.exists():
+        return {}
+    ledger = _object(json.loads(path.read_text(encoding='utf-8')), 'evaluation attempts')
+    if ledger.get('split') != split:
+        raise ValueError('Evaluation attempt split does not match the requested AP split')
+    exclusions = {}
+    for field in ('excluded_runs', 'runs'):
+        rows = ledger.get(field, [])
+        if not isinstance(rows, list):
+            raise ValueError(f'evaluation attempts.{field} must be a list')
+        seen = set()
+        for row in rows:
+            _object(row, f'evaluation attempts.{field} row')
+            if (row.get('model') not in MODELS or type(row.get('seed')) is not int
+                    or row['seed'] not in SEEDS):
+                raise ValueError('Unknown model/seed in evaluation attempts')
+            key = (row['model'], row['seed'])
+            if key in seen:
+                raise ValueError(f'Duplicate model/seed in evaluation attempts.{field}: {key}')
+            seen.add(key)
+            status = row.get('status')
+            if status in ('COMPLETE', 'INCOMPLETE'):
+                exclusions.pop(key, None)
+            elif status in ('FAIL', 'NOT RUN', 'RUNNING'):
+                exclusions[key] = {name: row[name] for name in ('model', 'seed', 'status')}
+                exclusions[key]['reason'] = row.get('reason', 'Latest evaluation attempt did not finish successfully')
+            else:
+                raise ValueError('Unknown status in evaluation attempts')
+    return exclusions
+
+
+def _load_records(output_dir, split, models, exclusions):
     records, seen = [], set()
+    excluded_paths = {output_dir / 'raw' / model / f'seed_{seed}' / 'metrics.json'
+                      for model, seed in exclusions}
     for path in sorted((output_dir / 'raw').rglob('metrics.json')):
+        # A rejected cache can itself be malformed. Skip by its canonical path
+        # before opening it; preserve the file for diagnosis or explicit repair.
+        if path in excluded_paths:
+            continue
         try:
             record = validate_record(json.loads(path.read_text(encoding='utf-8')), split=split)
             key = (record['model'], record['seed'])
@@ -164,7 +208,9 @@ def summarize(output_dir, split='test', models=None):
         raise ValueError('models must be a nonempty selection of distinct known model names')
     models = tuple(model for model in MODELS if model in requested)
     output_dir = Path(output_dir)
-    records = _load_records(output_dir, split, models)
+    exclusions = load_exclusions(output_dir, split)
+    records = _load_records(output_dir, split, models, exclusions)
+    excluded = [row for (model, seed), row in exclusions.items() if model in models]
     by_seed = [dict({'Model': record['model'], 'Seed': record['seed'], 'Split': split,
                      'Selected epoch': record['selected_epoch_zero_based'] + 1,
                      'selected_epoch_zero_based': record['selected_epoch_zero_based'],
@@ -175,8 +221,9 @@ def summarize(output_dir, split='test', models=None):
     for model in models:
         group = [record for record in records if record['model'] == model]
         missing_seeds = [seed for seed in SEEDS if all(record['seed'] != seed for record in group)]
+        failed_seeds = [seed for seed in SEEDS if exclusions.get((model, seed), {}).get('status') == 'FAIL']
         complete = not missing_seeds and all(record['status'] == 'COMPLETE' for record in group)
-        status = 'COMPLETE' if complete else ('INCOMPLETE' if group else 'NOT RUN')
+        status = 'FAIL' if failed_seeds else 'COMPLETE' if complete else ('INCOMPLETE' if group else 'NOT RUN')
         row = {'Model': model, 'Split': split, 'Status': status, 'measured_seed_count': len(group),
                'seeds': ','.join(str(record['seed']) for record in group)}
         valid_counts = {}
@@ -188,22 +235,27 @@ def summarize(output_dir, split='test', models=None):
                 row[column.replace(' (%)', ' sample SD (%)')] = statistics.stdev(values)
         summary.append(row)
         model_status[model] = {'status': status, 'measured_seed_count': len(group),
-                               'missing_seeds': missing_seeds, 'metric_valid_seed_count': valid_counts,
+                               'missing_seeds': missing_seeds, 'failed_seeds': failed_seeds,
+                               'metric_valid_seed_count': valid_counts,
                                'incomplete_record_seeds': [record['seed'] for record in group
                                                            if record['status'] != 'COMPLETE'],
                                'missing_metrics_by_seed': {
                                    str(record['seed']): [column for column in AP_COLUMNS
                                                         if record['metrics'][column] is None]
                                    for record in group}}
-    status = ('COMPLETE' if all(row['Status'] == 'COMPLETE' for row in summary)
+    status = ('FAIL' if any(row['Status'] == 'FAIL' for row in summary)
+              else 'COMPLETE' if all(row['Status'] == 'COMPLETE' for row in summary)
               else ('INCOMPLETE' if records else 'NOT RUN'))
     metadata = {
         'schema': 'paper_v2_ap_summary_v1', 'split': split, 'status': status,
         'output_dir': str(output_dir.resolve()), 'models': list(models), 'seeds': list(SEEDS),
         'measured_model_seed_count': len(records), 'expected_model_seed_count': len(models) * len(SEEDS),
         'complete_models': [row['Model'] for row in summary if row['Status'] == 'COMPLETE'],
+        'excluded_runs': excluded,
+        'failed_model_seed_count': sum(row['status'] == 'FAIL' for row in excluded),
         'model_status': model_status,
         'required_ap_columns': list(REQUIRED_AP), 'metric_columns': list(AP_COLUMNS),
+        'illumination_columns': dict(zip(AP_COLUMNS[-4:], ('自然光', '人工光', '微弱光', '钠黄光'))),
         'units': 'percent',
         'aggregation': 'Arithmetic mean and sample standard deviation (ddof=1) across seeds 0, 42, 3407; '
                        'each metric requires all three valid values; missing values remain blank, never zero.',

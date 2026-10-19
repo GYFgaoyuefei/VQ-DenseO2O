@@ -31,7 +31,34 @@ bash scripts/paper_v2/autodl/evaluate_and_summarize_ap.sh cuda:0 independent
 
 缺少训练完成标记、best.pth或运行元数据时标记NOT RUN。缺少某seed或某光照组时，已有单seed值保留；相应指标未凑齐三个有效seed则不输出均值/标准差，不补0。合法的AP=0会正常参与统计，COCO未定义指标保持空值。
 
-重跑相同命令会核对并复用已有记录；checkpoint、数据标注或显式光照映射发生变化时拒绝混用，使用新的`--ap-dir`开始另一批评估。失配/执行失败会记录原因并以非零状态退出，已完成的原始记录保留。单模型/单seed补算后的自动汇总会保留同一目录中其他模型的已有原始结果，不会把共享总表缩成单模型表。
+重跑相同命令会核对并复用已有记录；checkpoint、数据标注或显式光照映射发生变化时拒绝混用，使用新的`--ap-dir`开始另一批评估。失配/执行失败会记录原因，以非零状态退出，但先导出其余成功记录的部分CSV。失败或来源未核验通过的缓存不会进入CSV，离线汇总也遵循这一排除；单seed重试不会重新引入尚未修复的其他失败缓存。单模型/单seed补算后的自动汇总会保留同一目录中其他模型的已有原始结果，不会把共享总表缩成单模型表。
+
+四光照列保持原论文顺序：
+
+|CSV列名|对应光照|
+|---|---|
+|Natural AP (%)|自然光|
+|Artificial AP (%)|人工光|
+|Low-light AP (%)|微弱光|
+|Sodium-light AP (%)|钠黄光|
+
+`ap_protocol.json`的`illumination_columns`也保存这一中英文对应。run为COMPLETE时，Mixed AP和上述四项AP必须全部非空。
+
+## 负宽高报错与部分失败后的恢复
+
+2026-10-19用户提供的服务器日志显示10个run成功、5个run被旧脚本的预测框校验中断。旧版在任一失败后直接退出，导致成功记录也没有导出CSV。可先在仓库根目录运行`bash scripts/paper_v2/autodl/summarize_ap.sh`导出已有10组结果；只有B0三个seed齐全，其余模型的三seed均值暂时为空。
+
+修复涉及`tools/paper_v2/ap_metrics.py`、`ap_workflow.py`、`ap_summary.py`。将这三个文件同步到AutoDL后，保留现有`raw/`记录，重新执行：
+
+```bash
+cd /root/autodl-tmp/DEIMv2-new
+source scripts/paper_v2/autodl/env.sh
+bash scripts/paper_v2/autodl/evaluate_and_summarize_ap.sh cuda:0 independent
+```
+
+来源一致的10个成功run会复用，5个失败run重新推理。此次日志未保存出错框的具体值，不能从通用报错判断其幅度；源码和合成复现已确认DEIM的有符号距离解码可产生有限负宽高，原生COCO评估原样接收这些预测。新脚本与原生保持一致，不裁剪、不交换端点、不取绝对值、不丢弃检测。非有限坐标、非法分数或未知ID仍拒绝。
+
+新生成的`raw/<model>/seed_<seed>/metrics.json`增加`prediction_diagnostics`，记录预测总数、负宽/负高/负尺寸数量、零尺寸数量、负尺寸最大分数和最多5条实例，方便判断其实际影响。原有成功记录无需重新推理；其预测本就通过旧版非负宽高校验。
 
 ## 其他用法
 
@@ -72,3 +99,5 @@ bash scripts/paper_v2/autodl/summarize_efficiency.sh \
 ## 已执行验证
 
 2026-10-19全量回归427项通过（原有328项、新增99项），包含真实COCO合成评估、EMA推理、三个seed统计和效率主表导入；两个Bash脚本语法及离线shell→CLI冒烟通过。结果见`ap_regression_test_results.xml`及[08_训练前最终检查报告.md](08_训练前最终检查报告.md)。未读取真实Test，也未启动训练。
+
+同日根据服务器失败反馈修复后，全量回归**435项全部通过**，耗时107.64秒，证据为`ap_failure_recovery_test_results.xml`。覆盖15组中5失败的部分CSV导出、失败缓存隔离、负宽高与原生COCO的12项指标一致性，以及原生后处理后的完整预测保存。修复后服务器补跑尚未执行，未在本地读取实际Test。

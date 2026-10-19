@@ -127,7 +127,6 @@ def test_empty_dataset_has_no_metrics():
     ({'category_id': 99}, 'unknown image/category'),
     ({'image_id': True}, 'must be an integer'),
     ({'category_id': 1.1}, 'must be an integer'),
-    ({'bbox': [0, 0, -1, 20]}, 'negative bbox size'),
     ({'bbox': [0, 0, float('nan'), 20]}, 'finite numbers'),
     ({'bbox': [0, 0, 20]}, 'four xywh'),
     ({'score': float('inf')}, 'finite numbers'),
@@ -138,6 +137,44 @@ def test_invalid_predictions_fail(edit, match):
     predictions[0].update(edit)
     with pytest.raises(ValueError, match=match):
         evaluate_predictions(coco, predictions)
+
+
+def test_finite_reversed_boxes_match_native_coco_without_modifying_predictions():
+    import torch
+    from engine.data.dataset.coco_eval import CocoEvaluator
+
+    coco, predictions = fixture()
+    # Include substantial reversed corners, not only floating-point epsilon.
+    for bbox in ([30., 10., -20., 20.], [10., 30., 20., -20.],
+                 [30., 30., -20., -20.], [10., 10., 0., 20.]):
+        predictions.insert(0, dict(image_id=1, category_id=1, bbox=bbox, score=.99))
+    before = copy.deepcopy(predictions)
+    result = evaluate_predictions(coco, predictions)
+    native = CocoEvaluator(coco, ['bbox'])
+    by_image = {}
+    for image_id in coco.getImgIds():
+        items = [prediction for prediction in predictions if prediction['image_id'] == image_id]
+        boxes = torch.tensor([prediction['bbox'] for prediction in items], dtype=torch.float64)
+        boxes[:, 2:] += boxes[:, :2]
+        by_image[image_id] = dict(boxes=boxes,
+                                 scores=torch.tensor([prediction['score'] for prediction in items], dtype=torch.float64),
+                                 labels=torch.tensor([prediction['category_id'] for prediction in items]))
+    native.update(by_image)
+    native.synchronize_between_processes()
+    native.accumulate()
+    native.summarize()
+    expected = [float(value) * 100 if value >= 0 else None for value in native.coco_eval['bbox'].stats[:12]]
+    for key, value in zip(AP_COLUMNS[:12], expected):
+        assert result['metrics'][key] == (None if value is None else pytest.approx(value))
+    assert predictions == before
+    assert result['status'] == 'COMPLETE'
+    diagnostic = result['prediction_diagnostics']
+    assert diagnostic['total_predictions'] == 8
+    assert diagnostic['negative_size_count'] == 3
+    assert diagnostic['negative_width_count'] == diagnostic['negative_height_count'] == 2
+    assert diagnostic['zero_size_count'] == 1
+    assert diagnostic['negative_size_max_score'] == .99
+    assert len(diagnostic['negative_size_examples']) == 3
 
 
 def test_duplicate_record_ids_fail_but_duplicate_boxes_remain_false_positives():

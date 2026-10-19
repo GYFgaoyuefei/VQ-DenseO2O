@@ -119,6 +119,27 @@ def test_selected_ema_infers_once_and_reuses_predictions_for_all_ap(selected_run
         ap_evaluate.evaluate_run(**item.args)
 
 
+def test_signed_native_boxes_are_saved_and_diagnosed_without_filtering(selected_run, monkeypatch):
+    item = selected_run
+    original = item.detector.forward
+
+    def signed_boxes(samples):
+        result = original(samples)
+        result['pred_boxes'][:, -1, 2] = -.25
+        return result
+
+    monkeypatch.setattr(item.detector, 'forward', signed_boxes)
+    record = ap_evaluate.evaluate_run(**item.args)
+    assert record['status'] == 'COMPLETE'
+    assert record['prediction_diagnostics']['negative_size_count'] == 12  # 4 images x 3 classes.
+    assert record['prediction_diagnostics']['negative_height_count'] == 0
+    path = ap_evaluate.record_path(item.output, 'baseline_native', 42)
+    predictions = json.loads((path.parent / 'predictions.json').read_text(encoding='utf-8'))
+    assert len(predictions) == 1200
+    assert sum(prediction['bbox'][2] == -5. for prediction in predictions) == 12
+    assert ap_evaluate.reusable_record(**item.args) == record
+
+
 @pytest.mark.parametrize('change', ['model', 'seed', 'recipe', 'switch', 'precision', 'epoch'])
 def test_rejects_unbound_run_before_model_construction(selected_run, change):
     item = selected_run

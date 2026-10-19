@@ -80,8 +80,13 @@ def _validated_predictions(predictions, image_ids, category_ids):
         if any(not isinstance(value, Real) or isinstance(value, bool) or not math.isfinite(value)
                for value in values):
             raise ValueError(f'Prediction {index} bbox/score must contain finite numbers')
-        if bbox[2] < 0 or bbox[3] < 0 or not 0 <= score <= 1:
-            raise ValueError(f'Prediction {index} has negative bbox size or score outside [0, 1]')
+        if not 0 <= score <= 1:
+            raise ValueError(f'Prediction {index} image_id={image_id} category_id={category_id} '
+                             f'has score={score!r} outside [0, 1]; bbox={bbox!r}')
+        # DEIM's signed distance refinement can produce reversed corners. The
+        # native CocoEvaluator passes those finite boxes through unchanged.
+        # Do not reject, drop, clamp or reorder them only in the paper evaluator:
+        # doing so would change the detector's predictions and AP definition.
         if 'id' in prediction:
             detection_id = _integer(prediction['id'], f'Prediction {index} id')
             if detection_id in explicit_ids:
@@ -91,6 +96,22 @@ def _validated_predictions(predictions, image_ids, category_ids):
         result.append({'image_id': image_id, 'category_id': category_id,
                        'bbox': [float(value) for value in bbox], 'score': float(score)})
     return result
+
+
+def _prediction_diagnostics(predictions):
+    negative = [prediction for prediction in predictions
+                if prediction['bbox'][2] < 0 or prediction['bbox'][3] < 0]
+    return {
+        'total_predictions': len(predictions),
+        'negative_size_count': len(negative),
+        'negative_width_count': sum(prediction['bbox'][2] < 0 for prediction in predictions),
+        'negative_height_count': sum(prediction['bbox'][3] < 0 for prediction in predictions),
+        'zero_size_count': sum(prediction['bbox'][2] == 0 or prediction['bbox'][3] == 0
+                               for prediction in predictions),
+        'negative_size_max_score': max((prediction['score'] for prediction in negative), default=None),
+        'negative_size_examples': copy.deepcopy(negative[:5]),
+        'geometry_policy': 'Native COCO input unchanged; no box filtering, clamping, abs or corner reordering.',
+    }
 
 
 def _evaluate_subset(coco_gt, coco_dt, image_ids):
@@ -118,7 +139,9 @@ def evaluate_predictions(coco_gt, predictions, illumination_map=None):
     boxes, remain in the evaluation. If optional detection ``id`` fields are
     supplied they must be unique. The mapping accepts integer/string image IDs
     or exact filenames and uses the same light vocabulary as the dataset.
-    Missing, unknown, or conflicting acquisition labels raise ``ValueError``.
+    Finite negative/zero-size predictions follow the native evaluator unchanged
+    and are counted in prediction_diagnostics. Invalid scores and non-finite
+    coordinates still fail. Missing, unknown, or conflicting acquisition labels raise ``ValueError``.
     Empty or ground-truth-free groups have null AP and yield INCOMPLETE status.
     """
     image_ids = _unique_ids(coco_gt.dataset.get('images', []), 'image')
@@ -127,6 +150,7 @@ def evaluate_predictions(coco_gt, predictions, illumination_map=None):
         raise ValueError('COCO metadata and indexes are inconsistent; rebuild the COCO index')
     groups = _light_groups(coco_gt, illumination_map)
     results = _validated_predictions(predictions, image_ids, category_ids)
+    diagnostics = _prediction_diagnostics(results)
     # COCO evaluation can attach ignore fields to GT annotations. Do not modify
     # the caller's dataset or prediction cache when evaluating several scopes.
     evaluation_gt = copy.deepcopy(coco_gt)
@@ -145,5 +169,6 @@ def evaluate_predictions(coco_gt, predictions, illumination_map=None):
     metrics = dict(zip(AP_COLUMNS, [*mixed, *light_values]))
     required = [mixed[0], *light_values]
     return {'metrics': metrics,
+            'prediction_diagnostics': diagnostics,
             'image_counts': {'mixed': len(image_ids), **{key: len(value) for key, value in groups.items()}},
             'status': 'COMPLETE' if all(value is not None for value in required) else 'INCOMPLETE'}
