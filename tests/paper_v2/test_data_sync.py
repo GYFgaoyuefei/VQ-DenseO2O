@@ -16,7 +16,7 @@ from engine.data.transforms import PadToSize, SanitizeBoundingBoxes, SanitizeVis
 from engine.data.transforms.functional import crop
 from engine.data.transforms.mosaic import Mosaic
 from engine.data.visible_geometry import (assert_visible_alignment, concatenate_instances,
-                                          filter_instances)
+                                          filter_instances, resize_masks)
 
 
 def xyxy_target(boxes, size=16, light=0):
@@ -36,6 +36,50 @@ def xyxy_target(boxes, size=16, light=0):
 
 
 class DataGeometryTests(unittest.TestCase):
+    def test_same_size_mask_resize_preserves_values_and_independent_storage(self):
+        for dtype in (torch.uint8, torch.bool):
+            for wrapped in (False, True):
+                with self.subTest(dtype=dtype, wrapped=wrapped):
+                    target = xyxy_target([[1, 1, 5, 5], [6, 6, 9, 9], [10, 10, 14, 14]])
+                    masks = target['masks'].as_subclass(torch.Tensor).to(dtype)
+                    masks[2].zero_()
+                    target['masks'] = convert_to_tv_tensor(masks, 'masks') if wrapped else masks
+                    target['visible_mask_valid'][1] = False
+                    target['area_from_mask'] = torch.tensor([True, False, True])
+                    target['area'] = torch.tensor([999., 888., 777.])
+                    source_masks = target['masks']
+                    expected_masks = source_masks.clone()
+                    metadata = {k: v.clone() for k, v in target.items()
+                                if k not in ('masks', 'area', 'visible_mask_valid')}
+
+                    resize_masks(target, (16, 16))
+
+                    self.assertIs(type(target['masks']), torch.Tensor)
+                    self.assertEqual(target['masks'].dtype, dtype)
+                    self.assertTrue(torch.equal(target['masks'], expected_masks))
+                    self.assertNotEqual(target['masks'].data_ptr(), source_masks.data_ptr())
+                    self.assertEqual(target['visible_mask_valid'].tolist(), [True, False, False])
+                    self.assertEqual(target['area'].tolist(), [16., 888., 0.])
+                    for key, value in metadata.items():
+                        self.assertTrue(torch.equal(target[key], value), key)
+                    target['masks'].zero_()
+                    self.assertTrue(torch.equal(source_masks, expected_masks))
+
+    def test_same_size_mask_resize_still_rejects_invalid_targets(self):
+        for invalid_field, message in (('masks', 'binary'),
+                                       ('annotation_ids', 'annotation_ids'),
+                                       ('boxes', 'Non-finite')):
+            with self.subTest(invalid_field=invalid_field):
+                target = xyxy_target([[1, 1, 5, 5], [6, 6, 9, 9]])
+                if invalid_field == 'masks':
+                    target['masks'][0, 0, 0] = 2
+                elif invalid_field == 'annotation_ids':
+                    target['annotation_ids'] = target['annotation_ids'][:1]
+                else:
+                    target['boxes'][0, 0] = float('nan')
+                with self.assertRaisesRegex(ValueError, message):
+                    resize_masks(target, 16)
+
     def test_pad_to_size_supports_current_torchvision_and_binary_masks(self):
         for fill in (0, 114):
             with self.subTest(fill=fill):

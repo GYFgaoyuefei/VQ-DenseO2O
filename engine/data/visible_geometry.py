@@ -90,8 +90,17 @@ def mosaic_masks(masks, quadrant, height, width):
 def resize_masks(target, size):
     size = (size, size) if isinstance(size, int) else tuple(size)
     masks = target['masks']
-    target['masks'] = (F.interpolate(masks[:, None].float(), size=size, mode='nearest')[:, 0].to(masks.dtype)
-                       if len(masks) else masks.new_zeros((0, *size)))
+    if not len(masks):
+        target['masks'] = masks.new_zeros((0, *size))
+    elif (masks.ndim == 3 and tuple(masks.shape[-2:]) == size
+          and all(isinstance(dim, int) and dim > 0 for dim in size)
+          and masks.dtype in (torch.uint8, torch.bool)):
+        # Identity nearest resize needs no FP32 intermediate. Keep a separate
+        # plain tensor, as interpolation does, so later edits cannot affect a
+        # donor/cache reference. Other dtypes retain the original FP32 path.
+        target['masks'] = masks.as_subclass(torch.Tensor).clone(memory_format=torch.contiguous_format)
+    else:
+        target['masks'] = F.interpolate(masks[:, None].float(), size=size, mode='nearest')[:, 0].to(masks.dtype)
     if 'area_from_mask' in target:
         from_mask = target['area_from_mask'].bool()
         target['area'][from_mask] = target['masks'][from_mask].flatten(1).sum(1).to(target['area'].dtype)
@@ -102,9 +111,12 @@ def translated_record(source, instance, source_rect, destination_rect, image_siz
     """Metadata for one translation; geometric bbox/area are supplied by caller."""
     sx0, sy0, sx1, sy1 = source_rect
     x0, y0, x1, y1 = destination_rect
-    record = {k: source[k][instance:instance + 1].clone() for k in instance_fields(source)
-              if k not in ('boxes', 'labels', 'area', 'mixup')}
-    if 'masks' in record:
+    fields = instance_fields(source)
+    # The translated mask is built below; cloning its full source first would
+    # only allocate a second mask that is immediately discarded.
+    record = {k: source[k][instance:instance + 1].clone() for k in fields
+              if k not in ('boxes', 'labels', 'area', 'mixup', 'masks')}
+    if 'masks' in fields:
         mask = source['masks'].new_zeros((1, *image_size))
         mask[:, y0:y1, x0:x1] = source['masks'][instance:instance + 1, sy0:sy1, sx0:sx1]
         record['masks'] = mask

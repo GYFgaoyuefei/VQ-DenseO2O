@@ -184,17 +184,19 @@ class BatchImageCollateFunction(BaseCollateFunction):
 
             # Prepare targets for Mixup
             shifted_targets = targets[-1:] + targets[:-1]
-            updated_targets = deepcopy(targets)
+            updated_targets = []
 
             for i in range(len(targets)):
-                # Combine boxes, labels, and areas from original and shifted targets
-                updated_targets[i] = concatenate_instances([targets[i], shifted_targets[i]])
+                # Concatenation already creates every output instance tensor;
+                # no copied target is consumed when building this dictionary.
+                updated_target = concatenate_instances([targets[i], shifted_targets[i]])
 
                 # Add mixup ratio to targets
-                updated_targets[i]['mixup'] = torch.tensor(
+                updated_target['mixup'] = torch.tensor(
                     [beta] * len(targets[i]['labels']) + [1.0 - beta] * len(shifted_targets[i]['labels']), 
                     dtype=torch.float32
                     )
+                updated_targets.append(updated_target)
             targets = updated_targets
 
         elif (self.copyblend_epochs[0] <= self.epoch < self.copyblend_epochs[-1] and random.random() < self.copyblend_prob):
@@ -381,6 +383,7 @@ class BatchImageCollateFunction(BaseCollateFunction):
         # Mixup
         images, targets = self.apply_mixup(images, targets)
 
+        alignment_checked = False
         if self.scales is not None and self.epoch < self.stop_epoch:
             # sz = random.choice(self.scales)
             # sz = [sz] if isinstance(sz, int) else list(sz)
@@ -391,8 +394,12 @@ class BatchImageCollateFunction(BaseCollateFunction):
             if 'masks' in targets[0]:
                 for tg in targets:
                     resize_masks(tg, sz)
+                # resize_masks validates every target after its final mutation.
+                # No geometry changes before return, so do not scan them again.
+                alignment_checked = True
 
-        for tg in targets:
-            assert_visible_alignment(tg, *images.shape[-2:])
+        if not alignment_checked:
+            for tg in targets:
+                assert_visible_alignment(tg, *images.shape[-2:])
 
         return images, targets
