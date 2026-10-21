@@ -54,6 +54,10 @@ def evaluate_and_summarize(args):
     if args.nproc_per_node != 1 or int(os.environ.get('WORLD_SIZE', '1')) != 1:
         raise ValueError('AP campaign uses one process; do not launch it with torchrun')
     models = selected_models(args)
+    run_policy = getattr(args, 'run_policy', 'strict')
+    if run_policy not in ('strict', 'existing-checkpoint'):
+        raise ValueError(f'Unknown run policy: {run_policy}')
+    required_files = ('best.pth',) if run_policy == 'existing-checkpoint' else REQUIRED_RUN_FILES
     seeds = list(args.ap_seeds)
     if not seeds or len(set(seeds)) != len(seeds) or any(seed not in SEEDS for seed in seeds):
         raise ValueError('AP seeds must be unique values from 0, 42, 3407')
@@ -66,6 +70,7 @@ def evaluate_and_summarize(args):
             raise ValueError('--illumination-map must contain a JSON object mapping image IDs or filenames to light labels')
     exclusions = load_exclusions(output, args.ap_split)
     attempts = {'algorithm_suite': ALGORITHM_SUITE, 'split': args.ap_split, 'models': models, 'seeds': seeds,
+                'run_policy': run_policy,
                 'started_utc': datetime.now(timezone.utc).isoformat(), 'status': 'RUNNING', 'runs': []}
     attempt_path = output / 'evaluation_attempts.json'
 
@@ -83,15 +88,16 @@ def evaluate_and_summarize(args):
             print(f'AP {args.ap_split}: {model} seed={seed}', flush=True)
             try:
                 kwargs = dict(run_dir=run_dir, model=model, seed=seed, output_dir=output,
-                              split=args.ap_split, data_root=args.data_root, illumination_map=mapping)
+                              split=args.ap_split, data_root=args.data_root, illumination_map=mapping,
+                              run_policy=run_policy)
                 existing = output / 'raw' / model / f'seed_{seed}' / 'metrics.json'
                 if existing.exists():
                     record = reusable_record(**kwargs)
                     row.update(status=record['status'], reused=True)
                 else:
-                    missing = [name for name in REQUIRED_RUN_FILES if not (run_dir / name).is_file()]
+                    missing = [name for name in required_files if not (run_dir / name).is_file()]
                     if missing:
-                        row.update(status='NOT RUN', reason='Missing completed run files: ' + ', '.join(missing))
+                        row.update(status='NOT RUN', reason='Missing required run files: ' + ', '.join(missing))
                     else:
                         record = evaluate_run(**kwargs, device=args.device)
                         row.update(status=record['status'], reused=False)

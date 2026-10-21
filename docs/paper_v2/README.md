@@ -10,5 +10,6 @@
 6. [算法正确性测试报告](06_算法正确性测试报告.md)
 7. [后续组合消融与统计说明](07_后续组合消融与统计说明.md)
 8. [Mask 数据路径冗余优化](paper_v3_mask_pipeline_optimization.md)
+9. [九模型 Test 与效率统一汇总](11_九模型Test与效率统一汇总.md)
 
 实际配置差异见 [ablation_config_audit.md](ablation_config_audit.md)。其他旧编号文档、旧测试 XML/JSON 保留作历史，不能将其中 GR-VQ、残差门控或旧输出目录命令用于本轮实验。

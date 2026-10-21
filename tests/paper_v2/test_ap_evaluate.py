@@ -119,19 +119,35 @@ def test_selected_ema_infers_once_and_reuses_predictions_for_all_ap(selected_run
         ap_evaluate.evaluate_run(**item.args)
 
 
-def test_direct_api_rejects_historical_campaign_before_opening_resources(selected_run, monkeypatch):
+def test_direct_api_rejects_other_split_campaign_before_opening_resources(selected_run, monkeypatch):
     item = selected_run
     item.output.mkdir()
     marker = item.output / 'ap_protocol.json'
-    marker.write_text(json.dumps({'schema': 'paper_v2_ap_summary_v1', 'split': 'test'}))
+    marker.write_text(json.dumps({'schema': 'paper_v2_ap_summary_v1', 'split': 'validation'}))
     csv = item.output / 'ap_summary.csv'
     csv.write_text('old measured summary')
     before = {path.name: path.read_bytes() for path in (marker, csv)}
     monkeypatch.setattr(ap_evaluate, '_binding', lambda *a, **kw: pytest.fail('Do not open data or checkpoints'))
-    with pytest.raises(ValueError, match='Historical or unbound AP campaign'):
+    with pytest.raises(ValueError, match='AP protocol split'):
         ap_evaluate.evaluate_run(**item.args)
     assert {path.name: path.read_bytes() for path in item.output.iterdir()} == before
     assert item.detector.calls == item.seen_cfg == []
+
+
+@pytest.mark.parametrize('suite', [None, 'historical_training_label'])
+def test_compatible_cache_does_not_require_training_suite_tag(selected_run, suite):
+    item = selected_run
+    record = ap_evaluate.evaluate_run(**item.args)
+    if suite is None:
+        record.pop('algorithm_suite')
+    else:
+        record['algorithm_suite'] = suite
+    path = ap_evaluate.record_path(item.output, 'baseline_native', 42)
+    path.write_text(json.dumps(record), encoding='utf-8')
+    before = path.read_bytes()
+    assert ap_evaluate.reusable_record(**item.args) == record
+    assert path.read_bytes() == before
+    assert item.detector.calls == [(4, 2.)]
 
 
 def test_signed_native_boxes_are_saved_and_diagnosed_without_filtering(selected_run, monkeypatch):

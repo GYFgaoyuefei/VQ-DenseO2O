@@ -338,6 +338,13 @@ def benchmark_binding(args):
     """Bind a formal measurement to one completed run and its selected EMA."""
     import yaml
     directory = output_path(args)
+    if getattr(args, 'run_policy', 'strict') == 'existing-checkpoint':
+        from tools.paper_v2.checkpoint_binding import bind_existing_checkpoint
+        if args.checkpoint and Path(args.checkpoint).resolve() != (directory / 'best.pth').resolve():
+            raise ValueError('Efficiency uses best.pth from the requested model/seed directory')
+        cfg, checkpoint, selection, provenance = bind_existing_checkpoint(directory, args.model, args.seed)
+        cfg['_evaluation_provenance'] = provenance
+        return cfg, checkpoint, selection
     cfg = yaml.safe_load((directory / 'config_resolved.yml').read_text(encoding='utf-8'))
     info = json.loads((directory / 'run_info.json').read_text(encoding='utf-8'))
     if info.get('experiment') != args.model or info.get('seed') != args.seed or cfg.get('seed') != args.seed:
@@ -390,7 +397,9 @@ def benchmark(args):
     cfg['DINOv3STAs']['weights_path'] = None
     obj = create_config(cfg)
     model = obj.model
-    model.load_state_dict(state['ema']['module'], strict=True)
+    from tools.paper_v2.checkpoint_binding import load_evaluation_state, selected_ema
+    load_evaluation_state(model, selected_ema(state), getattr(args, 'run_policy', 'strict'), cfg)
+    print(f'Loaded FP32 EMA from {checkpoint} (epoch {selected + 1}); inference only.', flush=True)
     del state
     result = measure(model, obj.postprocessor, args.device)
     stat = checkpoint.stat()
@@ -403,6 +412,8 @@ def benchmark(args):
                              'mtime_ns': stat.st_mtime_ns, 'model_state': 'ema'},
               'git_commit': git('rev-parse', 'HEAD'), 'source_dirty': bool(git('status', '--porcelain')),
               'measured_utc': datetime.now(timezone.utc).isoformat(), **result}
+    if '_evaluation_provenance' in cfg:
+        report['run_provenance'] = cfg['_evaluation_provenance']
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('x', encoding='utf-8') as handle:
         json.dump(report, handle, indent=2, allow_nan=False)
@@ -453,6 +464,8 @@ def parser():
     p.add_argument('--output-dir')
     p.add_argument('--resume')
     p.add_argument('--checkpoint')
+    p.add_argument('--run-policy', choices=('strict', 'existing-checkpoint'), default='strict',
+                   help='Evaluation/benchmark only: existing-checkpoint requires best.pth, without training version/metadata gates')
     p.add_argument('--nproc-per-node', type=int, default=1)
     p.add_argument('--config-only', action='store_true')
     p.add_argument('--synthetic', action='store_true')

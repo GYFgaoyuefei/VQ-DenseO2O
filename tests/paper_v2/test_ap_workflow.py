@@ -167,8 +167,9 @@ def test_paper_efficiency_import_accepts_test_percent_ap_and_rejects_validation(
 
 @pytest.mark.parametrize('marker', ['ap_protocol.json', 'evaluation_attempts.json'])
 @pytest.mark.parametrize('suite', [None, 'paper_v2_gr_residual'])
-def test_historical_campaign_is_untouched_before_retry_and_summary(tmp_path, monkeypatch, marker, suite):
+def test_compatible_campaign_reuses_raw_records_without_training_suite_gate(tmp_path, monkeypatch, marker, suite):
     from tools.paper_v2 import ap_evaluate
+    from test_ap_summary import make_record
 
     directory = tmp_path / 'ap'
     directory.mkdir()
@@ -176,22 +177,21 @@ def test_historical_campaign_is_untouched_before_retry_and_summary(tmp_path, mon
     if suite is not None:
         metadata['algorithm_suite'] = suite
     (directory / marker).write_text(json.dumps(metadata))
-    (directory / 'ap_by_seed.csv').write_text('legacy measured results')
-    (directory / 'ap_summary.csv').write_text('legacy summary')
     cached = directory / 'raw/baseline_native/seed_42/metrics.json'
     cached.parent.mkdir(parents=True)
-    cached.write_text('{"schema":"paper_v2_ap_record_v1","model":"baseline_native"}')
-    before = {str(path.relative_to(directory)): path.read_bytes()
-              for path in directory.rglob('*') if path.is_file()}
-    monkeypatch.setattr(ap_evaluate, 'reusable_record', lambda **kw: pytest.fail('Reject before cache access'))
+    record = make_record(seed=42)
+    if suite is None:
+        record.pop('algorithm_suite')
+    else:
+        record['algorithm_suite'] = suite
+    cached.write_text(json.dumps(record))
+    before = cached.read_bytes()
+    monkeypatch.setattr(ap_evaluate, 'reusable_record', lambda **kw: record)
     monkeypatch.setattr(ap_evaluate, 'evaluate_run', lambda **kw: pytest.fail('Reject before inference'))
     args = arguments(tmp_path, '--ap-seeds', '42')
-    # B0 is a valid identifier in both suites: naming alone cannot protect it.
     args.model = 'baseline_native'
-    with pytest.raises(ValueError, match='Historical or unbound AP campaign'):
-        ap_workflow.evaluate_and_summarize(args)
-    with pytest.raises(ValueError, match='Historical or unbound AP campaign'):
-        ap_workflow.summarize(args)
-    after = {str(path.relative_to(directory)): path.read_bytes()
-             for path in directory.rglob('*') if path.is_file()}
-    assert after == before
+    result = ap_workflow.evaluate_and_summarize(args)
+    assert result['measured_model_seed_count'] == 1
+    assert result['sources'][0]['recorded_algorithm_suite'] == suite
+    assert ap_workflow.summarize(args)['measured_model_seed_count'] == 1
+    assert cached.read_bytes() == before

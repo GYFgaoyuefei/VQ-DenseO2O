@@ -125,8 +125,6 @@ def test_missing_seeds_never_look_like_complete_measurements(tmp_path, count):
 
 
 @pytest.mark.parametrize('mutation,match', [
-    (lambda r: r.pop('algorithm_suite'), 'Historical efficiency'),
-    (lambda r: r.update(algorithm_suite='paper_v2_old'), 'Historical efficiency'),
     (lambda r: r['protocol'].update(timed_iterations=300), 'Nonstandard efficiency protocol'),
     (lambda r: r['repeats'].pop(), 'Exactly 5 repeats'),
     (lambda r: r['repeats'][0]['scopes'][SCOPES[0]].update(timed_iterations=300), '500 timed'),
@@ -170,17 +168,29 @@ def test_historical_summary_directory_cannot_be_overwritten(tmp_path, with_proto
     if with_protocol:
         (tmp_path / 'efficiency_protocol.json').write_text('{"schema":"paper_v2_efficiency_summary_v1"}')
     before = {path.name: path.read_bytes() for path in tmp_path.iterdir()}
-    with pytest.raises(ValueError, match='Historical efficiency|lack suite provenance'):
+    with pytest.raises(ValueError, match='Nonstandard efficiency protocol|lack measurement protocol'):
         summarize(tmp_path)
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
 
 
-def test_historical_ap_csv_is_not_imported(tmp_path):
+def test_ap_csv_does_not_require_a_training_suite_tag(tmp_path):
     path = tmp_path / 'old_ap.csv'
     path.write_text('Model,Seed,Mixed AP (%)\nbaseline_native,0,42\n', encoding='utf-8')
-    with pytest.raises(ValueError, match='Algorithm suite'):
-        summarize(tmp_path / 'new_efficiency', ap_csv=path)
-    assert not (tmp_path / 'new_efficiency').exists()
+    summarize(tmp_path / 'new_efficiency', ap_csv=path)
+    rows = read_csv(tmp_path / 'new_efficiency', 'ap_by_seed_snapshot.csv')
+    assert rows[0]['Mixed AP (%)'] == '42.0'
+
+
+@pytest.mark.parametrize('tag', [None, 'paper_v2_old'])
+def test_same_protocol_efficiency_accepts_any_training_suite_tag(tmp_path, tag):
+    record = make_record()
+    if tag is None:
+        record.pop('algorithm_suite')
+    else:
+        record['algorithm_suite'] = tag
+    write_record(tmp_path, record)
+    summarize(tmp_path)
+    assert len(read_csv(tmp_path, 'efficiency_by_seed.csv')) == 1
 
 
 @pytest.mark.parametrize('location,value', [

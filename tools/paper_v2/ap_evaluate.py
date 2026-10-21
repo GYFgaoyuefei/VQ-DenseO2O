@@ -54,15 +54,9 @@ def _checkpoint_identity(checkpoint):
             'mtime_ns': stat.st_mtime_ns, 'model_state': 'ema'}
 
 
-def _binding(run_dir, model, seed, split, data_root, illumination_map):
-    # Lazy imports avoid a circular dependency with the unified CLI.
-    from tools.paper_v2.run import check_assets, load_resolved, verify_recipe
+def _strict_run_binding(run_dir, model, seed):
+    from tools.paper_v2.run import load_resolved, verify_recipe
 
-    if split not in ('test', 'validation'):
-        raise ValueError('split must be test or validation')
-    if type(seed) is not int or seed not in (0, 42, 3407):
-        raise ValueError('Paper v2 seeds are 0, 42 and 3407')
-    run_dir = Path(run_dir).resolve()
     cfg = yaml.safe_load((run_dir / 'config_resolved.yml').read_text(encoding='utf-8'))
     info = json.loads((run_dir / 'run_info.json').read_text(encoding='utf-8'))
     # Parse the completion marker too: a truncated marker is not a completed run.
@@ -91,6 +85,27 @@ def _binding(run_dir, model, seed, split, data_root, illumination_map):
     if type(epoch) is not int or not 0 <= epoch < 120:
         raise ValueError('Selected epoch must be zero-based within the 120-epoch recipe')
     checkpoint = run_dir / 'best.pth'
+    return cfg, checkpoint, selection
+
+
+def _binding(run_dir, model, seed, split, data_root, illumination_map, run_policy='strict'):
+    # Lazy imports avoid a circular dependency with the unified CLI.
+    from tools.paper_v2.run import check_assets
+
+    if split not in ('test', 'validation'):
+        raise ValueError('split must be test or validation')
+    if type(seed) is not int or seed not in (0, 42, 3407):
+        raise ValueError('Paper v2 seeds are 0, 42 and 3407')
+    run_dir = Path(run_dir).resolve()
+    if run_policy == 'strict':
+        cfg, checkpoint, selection = _strict_run_binding(run_dir, model, seed)
+    elif run_policy == 'existing-checkpoint':
+        from tools.paper_v2.checkpoint_binding import bind_existing_checkpoint
+        cfg, checkpoint, selection, provenance = bind_existing_checkpoint(run_dir, model, seed)
+        cfg['_evaluation_provenance'] = provenance
+    else:
+        raise ValueError(f'Unknown run policy: {run_policy}')
+    epoch = selection['epoch']
     identity = _checkpoint_identity(checkpoint)
 
     cfg = copy.deepcopy(cfg)
@@ -125,22 +140,28 @@ def record_path(output_dir, model, seed):
 
 
 def reusable_record(run_dir, model, seed, output_dir, split='test', device='cuda:0',
-                    data_root=None, illumination_map=None):
+                    data_root=None, illumination_map=None, run_policy='strict'):
     """Return an existing bound record, None if absent; reject stale provenance.
 
-    This checks metadata and file fingerprints without loading model tensors or
-    decoding images. A changed checkpoint/dataset needs a new output directory.
+    This checks metadata and file fingerprints without decoding images or running
+    inference. Existing-checkpoint mode also inspects checkpoint metadata/tensors.
+    A changed checkpoint/dataset needs a new output directory.
     """
     path = record_path(output_dir, model, seed)
     if not path.exists():
         return None
-    _, _, identity, epoch, dataset = _binding(run_dir, model, seed, split, data_root, illumination_map)
+    cfg, _, identity, epoch, dataset = _binding(
+        run_dir, model, seed, split, data_root, illumination_map, run_policy)
     record = json.loads(path.read_text(encoding='utf-8'))
-    expected = {'schema': SCHEMA, 'algorithm_suite': ALGORITHM_SUITE, 'model': model, 'seed': seed, 'split': split,
+    expected = {'schema': SCHEMA, 'model': model, 'seed': seed, 'split': split,
                 'selected_epoch_zero_based': epoch, 'checkpoint': identity,
                 'dataset': dataset, 'evaluation': EVALUATION}
     if any(record.get(key) != value for key, value in expected.items()):
         raise ValueError(f'Existing AP record has different run/data/protocol provenance: {path}')
+    recorded_digest = (record.get('run_provenance') or {}).get('inference_config_sha256')
+    current_digest = (cfg.get('_evaluation_provenance') or {}).get('inference_config_sha256')
+    if recorded_digest and current_digest and recorded_digest != current_digest:
+        raise ValueError(f'Existing AP record has different inference configuration provenance: {path}')
     if not (path.parent / 'predictions.json').is_file():
         raise ValueError(f'Existing AP record is missing predictions.json: {path.parent}')
     from tools.paper_v2.ap_summary import validate_record
@@ -210,8 +231,8 @@ def _publish(path, record, predictions):
 
 
 def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0',
-                 data_root=None, illumination_map=None):
-    """Evaluate one completed run, write raw/<model>/seed_<seed>, return record.
+                 data_root=None, illumination_map=None, run_policy='strict'):
+    """Evaluate one best.pth, write raw/<model>/seed_<seed>, return record.
 
     The caller explicitly invokes this function for Test; no Test access occurs
     in training or validation selection. Existing records are never overwritten.
@@ -224,7 +245,7 @@ def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0'
     if path.parent.exists():
         raise FileExistsError(f'AP result directory already exists: {path.parent}')
     cfg, checkpoint, identity, epoch, dataset = _binding(
-        run_dir, model, seed, split, data_root, illumination_map)
+        run_dir, model, seed, split, data_root, illumination_map, run_policy)
     state = torch.load(checkpoint, map_location='cpu', weights_only=False)
     if type(state.get('last_epoch')) is not int or state['last_epoch'] != epoch:
         raise ValueError('best.pth epoch differs from the recorded EMA selection')
@@ -236,7 +257,9 @@ def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0'
         raise ValueError('Selected checkpoint EMA must retain FP32 tensors')
     obj = _create_config(cfg)
     detector = obj.model
-    detector.load_state_dict(ema, strict=True)
+    from tools.paper_v2.checkpoint_binding import load_evaluation_state
+    load_evaluation_state(detector, ema, run_policy, cfg)
+    print(f'Loaded FP32 EMA from {checkpoint} (epoch {epoch + 1}, strict=True); evaluation only.', flush=True)
     detector = detector.to(device).eval()
     postprocessor = obj.postprocessor.to(device).eval()
     if getattr(postprocessor, 'deploy_mode', False):
@@ -252,6 +275,8 @@ def evaluate_run(run_dir, model, seed, output_dir, split='test', device='cuda:0'
               'evaluation': copy.deepcopy(EVALUATION), 'device': str(device),
               'tool': {'name': 'faster-coco-eval', 'version': version('faster-coco-eval')},
               'evaluated_utc': datetime.now(timezone.utc).isoformat(), **result}
+    if '_evaluation_provenance' in cfg:
+        record['run_provenance'] = copy.deepcopy(cfg['_evaluation_provenance'])
     from tools.paper_v2.ap_summary import validate_record
     validate_record(record, split=split)
     _publish(path, record, predictions)

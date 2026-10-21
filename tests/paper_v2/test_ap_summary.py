@@ -341,16 +341,29 @@ def test_invalid_model_scope_rejected(tmp_path, models):
         summarize(tmp_path, models=models)
 
 
-@pytest.mark.parametrize('evidence', ['unbound_raw', 'unbound_tables', 'mixed_markers'])
-def test_unbound_ap_exports_cannot_be_relabelled_as_new_suite(tmp_path, evidence):
-    if evidence != 'unbound_tables':
-        record = make_record()
-        record.pop('algorithm_suite')
-        write_record(tmp_path, record)
-    if evidence == 'mixed_markers':
+@pytest.mark.parametrize('suite', [None, 'historical_training_label'])
+@pytest.mark.parametrize('with_markers', [False, True])
+def test_compatible_ap_evidence_is_independent_of_training_suite_tag(tmp_path, suite, with_markers):
+    raw_paths = []
+    for seed in SEEDS:
+        record = make_record(seed)
+        if suite is None:
+            record.pop('algorithm_suite')
+        else:
+            record['algorithm_suite'] = suite
+        raw_paths.append(write_record(tmp_path, record))
+    if with_markers:
         (tmp_path / 'ap_protocol.json').write_text(json.dumps({
-            'algorithm_suite': ALGORITHM_SUITE, 'split': 'test'}))
+            'algorithm_suite': suite, 'split': 'test'}))
         (tmp_path / 'evaluation_attempts.json').write_text(json.dumps({'split': 'test', 'runs': []}))
+    before = [path.read_bytes() for path in raw_paths]
+    result = summarize(tmp_path, models=['baseline_native'])
+    assert result['status'] == 'COMPLETE'
+    assert all(source['recorded_algorithm_suite'] == suite for source in result['sources'])
+    assert [path.read_bytes() for path in raw_paths] == before
+
+
+def test_unbound_csv_only_exports_are_preserved(tmp_path):
     (tmp_path / 'ap_summary.csv').write_text('historical AP summary')
     before = {str(path.relative_to(tmp_path)): path.read_bytes()
               for path in tmp_path.rglob('*') if path.is_file()}

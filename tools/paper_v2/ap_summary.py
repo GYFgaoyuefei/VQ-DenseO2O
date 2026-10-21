@@ -48,8 +48,6 @@ def validate_record(record, split=None):
     _object(record, 'AP record')
     if record.get('schema') != 'paper_v2_ap_record_v1':
         raise ValueError('Unknown AP record schema')
-    if record.get('algorithm_suite') != ALGORITHM_SUITE:
-        raise ValueError('Historical AP cannot enter the new beta_select algorithm suite')
     if record.get('status') not in ('COMPLETE', 'INCOMPLETE'):
         raise ValueError('AP record status must be COMPLETE or INCOMPLETE')
     if record.get('model') not in MODELS:
@@ -132,19 +130,19 @@ def validate_campaign(output_dir, split):
     existing = [path for path in markers if path.exists()]
     for path in existing:
         metadata = _object(json.loads(path.read_text(encoding='utf-8')), path.name)
-        if metadata.get('algorithm_suite') != ALGORITHM_SUITE:
-            raise ValueError(f'Historical or unbound AP campaign: {path}; use a new --ap-dir')
         if metadata.get('split') != split:
             label = 'Evaluation attempt split' if path.name == 'evaluation_attempts.json' else 'AP protocol split'
             raise ValueError(f'{label} does not match the requested AP split')
     if not existing:
-        # Raw-only exports can be summarized, but only with explicit new-suite
-        # evidence. Legacy tables without any binding must not be overwritten.
+        # Compatible raw evidence can be summarized regardless of its training
+        # suite label. CSV-only exports without binding must not be overwritten.
         raw_paths = list((output_dir / 'raw').rglob('metrics.json'))
         for path in raw_paths:
             record = _object(json.loads(path.read_text(encoding='utf-8')), str(path))
-            if record.get('algorithm_suite') != ALGORITHM_SUITE:
-                raise ValueError(f'Historical or unbound AP campaign: {path}; use a new --ap-dir')
+            if record.get('schema') != 'paper_v2_ap_record_v1':
+                raise ValueError(f'Unknown AP record schema: {path}')
+            if record.get('split') != split:
+                raise ValueError(f'Mixed evaluation splits: expected {split}, found {record.get("split")}')
         if not raw_paths and any((output_dir / name).exists() for name in ('ap_by_seed.csv', 'ap_summary.csv')):
             raise ValueError(f'Historical or unbound AP tables in {output_dir}; use a new --ap-dir')
 
@@ -291,14 +289,18 @@ def summarize(output_dir, split='test', models=None):
         'aggregation': 'Arithmetic mean and sample standard deviation (ddof=1) across seeds 0, 42, 3407; '
                        'each metric requires all three valid values; missing values remain blank, never zero.',
         'selected_epoch': 'Selected epoch is one-based; selected_epoch_zero_based preserves the checkpoint index.',
-        'checkpoint_selection': 'EMA FP32 Mixed Validation AP; Test does not select checkpoints.',
+        'checkpoint_selection': 'Evaluates the EMA in each supplied best.pth; Test does not select checkpoints. '
+                                'Existing-checkpoint runs report selection verification in each source run_provenance; '
+                                'missing training metadata does not establish EMA FP32 Mixed Validation AP selection.',
         'dataset': records[0]['dataset'] if records else None,
         'evaluation': records[0]['evaluation'] if records else None,
         'tool': records[0]['tool'] if records else None,
         'raw_record_paths': [f"raw/{record['model']}/seed_{record['seed']}/metrics.json" for record in records],
         'sources': [{'model': record['model'], 'seed': record['seed'], 'checkpoint': record['checkpoint'],
+                     'recorded_algorithm_suite': record.get('algorithm_suite'),
                      'selected_epoch_zero_based': record['selected_epoch_zero_based'],
-                     'image_counts': record['image_counts']} for record in records],
+                     'image_counts': record['image_counts'],
+                     'run_provenance': record.get('run_provenance')} for record in records],
     }
     # Serialize before any report writes, so invalid provenance cannot leave a
     # new CSV beside an old protocol manifest.
