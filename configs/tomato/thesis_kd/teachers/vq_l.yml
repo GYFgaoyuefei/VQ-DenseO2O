@@ -1,0 +1,7 @@
+# T0 的训练配置和 checkpoint 必须由运行者指定。
+state: ema
+backbone: dinov3_vits16
+architecture: DEIM
+precision: fp32
+feature_strides: [8, 16, 32]
+dynamic_encoder_position: true

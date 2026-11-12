@@ -1,0 +1,7 @@
+enabled: true
+active_scales: [P3, P4, P5]
+lambda_kd: 1.0
+warmup_epochs: 5
+reduction: active_scales_mean
+teacher_precision: fp32
+projector_bias: false

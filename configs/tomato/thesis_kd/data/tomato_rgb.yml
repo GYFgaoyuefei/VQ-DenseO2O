@@ -1,0 +1,20 @@
+num_classes: 3
+remap_mscoco_category: false
+PostProcessor:
+  category_ids: [1, 2, 3]
+train_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ${TOMATO_DATA_ROOT}/images/train
+    ann_file: ${TOMATO_DATA_ROOT}/annotations/instances_train.json
+    category_ids: [1, 2, 3]
+    return_masks: false
+val_dataloader:
+  type: DataLoader
+  dataset:
+    type: CocoDetection
+    img_folder: ${TOMATO_DATA_ROOT}/images/val
+    ann_file: ${TOMATO_DATA_ROOT}/annotations/instances_val.json
+    category_ids: [1, 2, 3]
+    return_masks: false

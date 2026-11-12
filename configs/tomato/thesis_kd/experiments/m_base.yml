@@ -1,0 +1,2 @@
+arch: m
+kd: {enabled: false}

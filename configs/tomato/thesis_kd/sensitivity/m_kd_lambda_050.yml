@@ -1,0 +1,2 @@
+arch: m
+kd: {enabled: true, lambda_kd: 0.5}

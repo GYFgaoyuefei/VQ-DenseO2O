@@ -1,0 +1,3 @@
+architecture_source: configs/deimv2/deimv2_dinov3_m_coco.yml
+DINOv3STAs:
+  weights_path: null
