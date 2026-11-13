@@ -41,10 +41,15 @@ def test_resource_isolation(tmp_path, monkeypatch):
         monkeypatch.setenv('THESIS_KD_M_' + kind, str(f))
     check_resources(resolve_config('m_base'))
     kd = resolve_config('m_kd')
-    with pytest.raises(FileNotFoundError, match='TEACHER'):
+    with pytest.raises(FileNotFoundError) as missing:
         check_resources(kd)
+    assert 'THESIS_KD_TEACHER_CONFIG' in str(missing.value)
+    assert 'THESIS_KD_TEACHER_CHECKPOINT' in str(missing.value)
     kd['kd']['lambda_kd'] = 0.
     check_resources(kd)
+    monkeypatch.setenv('THESIS_KD_TEACHER_CONFIG', str(L_CONFIG))
+    monkeypatch.setenv('THESIS_KD_TEACHER_CHECKPOINT', str(f))
+    check_resources(resolve_config('m_kd'))
 
 
 @pytest.fixture(scope='module')
@@ -171,9 +176,10 @@ def test_synthetic_full_t0_load(tmp_path, torch_native):
     cfg = resolve_config('m_kd')
     cfg['resources'].update(THESIS_KD_TEACHER_CONFIG=str(L_CONFIG),
                             THESIS_KD_TEACHER_CHECKPOINT=str(path),
-                            THESIS_KD_TEACHER_VALIDATION='synthetic fixture')
+                            THESIS_KD_TEACHER_VALIDATION=None)
     torch_native.save({'ema': {'module': state}}, path)
     teacher, identity, native = build_teacher(cfg)
+    assert not identity['validation_basis']
     assert identity['state_path'] == 'ema.module' and teacher.channels == dict.fromkeys(SCALES, 224)
     assert native['thesis_kd_feature_extraction']['encoder_eval_spatial_size'] is None
     del teacher
@@ -211,8 +217,8 @@ def test_designated_teacher_if_configured(torch_native):
     from thesis_kd.teacher import build_teacher
     cfg = resolve_config('m_kd')
     if not all(cfg['resources'][k] for k in (
-            'THESIS_KD_TEACHER_CONFIG', 'THESIS_KD_TEACHER_CHECKPOINT', 'THESIS_KD_TEACHER_VALIDATION')):
-        pytest.skip('NOT RUN: designated T0 configuration/checkpoint/Validation basis unavailable')
+            'THESIS_KD_TEACHER_CONFIG', 'THESIS_KD_TEACHER_CHECKPOINT')):
+        pytest.skip('NOT RUN: designated T0 configuration/checkpoint unavailable')
     teacher, identity, _ = build_teacher(cfg)
     y = teacher(torch_native.zeros(1, 3, 640, 640))
     assert identity['checkpoint_sha256'] and [t.shape[-1] for t in y.values()] == [80, 40, 20]

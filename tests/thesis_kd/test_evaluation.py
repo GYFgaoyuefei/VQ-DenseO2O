@@ -167,6 +167,13 @@ def test_summary_three_seeds_pairing_no_smoke_speed(tmp_path):
     assert paper['m_base']['Latency(ms)'] == ''
     assert {float(r['DeltaAP_pp']) for r in read('paired_ap.csv')} == {3.0}
     assert all(r['TrainSeconds'] == '5' for r in read('training_cost.csv'))
+    teacher_result = tmp_path / 'teacher_metrics.json'
+    save(teacher_result, dict(checkpoint_sha256='a'*64, teacher_id='a'*64 + '/ema.module',
+                              split='val', annotation_sha256='b'*64, epoch=3,
+                              metrics={k: 45 for k in AP_COLUMNS}))
+    summarize_runs(campaign, teacher_result=teacher_result, split='val')
+    teacher = next(r for r in read('paper.csv') if r['Model'] == 'T0')
+    assert teacher['Status'] == 'FIXED CHECKPOINT' and float(teacher['Mixed AP (%)']) == 45
 
 
 @pytest.mark.parametrize("arch", ["m", "s"])

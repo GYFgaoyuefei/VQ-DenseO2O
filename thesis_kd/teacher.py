@@ -29,9 +29,9 @@ def load_detector(cfg):
     r = cfg['resources']
     path = r['THESIS_KD_TEACHER_CONFIG']
     checkpoint = r['THESIS_KD_TEACHER_CHECKPOINT']
-    validation = (r['THESIS_KD_TEACHER_VALIDATION'] or '').strip()
-    if not validation or not path or not checkpoint:
-        raise ValueError('T0 needs an explicit training config, checkpoint and Validation selection basis')
+    validation = (r.get('THESIS_KD_TEACHER_VALIDATION') or '').strip()
+    if not path or not checkpoint:
+        raise ValueError('T0 needs an explicit training config and checkpoint')
     native = teacher_config(path)
     # Preserve stored FP32 EMA buffers even where the native backbone's
     # scratch constructor allocates lower-precision RoPE periods.

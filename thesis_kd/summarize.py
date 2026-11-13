@@ -162,8 +162,8 @@ def summarize_runs(tag_dir, *, teacher_result=None, split='test'):
         if (len(tid) != 64 or any(ch not in '0123456789abcdef' for ch in tid)
                 or (teachers and t0['teacher_id'] not in teachers) or t0['split'] != split
                 or not t0['teacher_id'].startswith(tid + '/')
-                or not t0.get('validation_basis') or 'seed_mean' in t0):
-            raise ValueError('T0 must reference the exact shared Validation-selected checkpoint and split')
+                or 'seed_mean' in t0):
+            raise ValueError('T0 must reference the exact shared checkpoint and split')
         if data_fingerprints and (t0['annotation_sha256'], t0.get('illumination_map_sha256')) not in data_fingerprints:
             raise ValueError('T0 dataset identity differs from students')
         teacher_row = {'Model': 'T0', 'TeacherID': tid, 'Epoch': t0['epoch'], 'Split': split,

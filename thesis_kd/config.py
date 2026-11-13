@@ -165,8 +165,6 @@ def check_resources(cfg, *, resume=False):
     if kd_enabled(cfg):
         for name in ('THESIS_KD_TEACHER_CONFIG', 'THESIS_KD_TEACHER_CHECKPOINT'):
             check(name, values[name])
-        if not (values['THESIS_KD_TEACHER_VALIDATION'] or '').strip():
-            missing.append('THESIS_KD_TEACHER_VALIDATION=<unset>')
     if missing:
         raise FileNotFoundError('Missing required experiment resources: ' + ', '.join(missing))
     return checked
