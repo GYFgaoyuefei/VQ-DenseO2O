@@ -139,41 +139,70 @@ def test_native_s_validation_inference(tmp_path, monkeypatch):
         torch.set_num_threads(threads)
 
 
-def test_summary_three_seeds_pairing_no_smoke_speed(tmp_path):
-    campaign = tmp_path / 'feature_kd_ms_v1' / 'tag'
+@pytest.mark.parametrize(('split', 'seed_tags'), [
+    ('val', {}), ('test', {0: 'study11', 3407: 'study11'}),
+])
+def test_summary_three_seeds_pairing_no_smoke_speed(tmp_path, split, seed_tags):
+    campaign = tmp_path / 'feature_kd_ms_v1' / 'study01'
     for model in CORE:
         for i, seed in enumerate(SEEDS):
             run = campaign / model / f'seed_{seed}'
             teacher = {'id': 'a'*64 + '/ema.module'} if model.endswith('_kd') else None
-            keys = dict(seed=seed, experiment=model, run_tag='tag', protocol_id='feature_kd_ms_v1', teacher=teacher)
+            keys = dict(seed=seed, experiment=model, run_tag=seed_tags.get(seed, campaign.name),
+                        protocol_id='feature_kd_ms_v1', teacher=teacher)
             sel = dict(**keys, checkpoint='best_student.pth', epoch=3, mixed_ap=.4,
                        sha256=hashlib.sha256(model.encode()).hexdigest())
             save(run / 'selection.json', sel)
             save(run / 'run_info.json', dict(**keys, arch=model[0]))
-            save(run / 'evaluation_val/metrics.json', dict(selection=sel, split='val', frozen=False,
+            save(run / f'evaluation_{split}/metrics.json', dict(selection=sel, split=split, frozen=split == 'test',
                  annotation_sha256='b'*64, status='COMPLETE',
                  metrics={k: 40+i+(3 if teacher else 0) for k in AP_COLUMNS}))
             save(run / 'benchmark_smoke.json', {'formal': False, 'latency_ms': .01})
             save(run / 'kd_diagnostics.json', [dict(epoch=1, optimizer_updates=2, train_seconds=5, peak_memory_bytes=4)])
-    summary = summarize_runs(campaign, split='val')
+    if seed_tags:
+        with pytest.raises(ValueError):
+            summarize_runs(campaign, split=split)
+    summary = summarize_runs(campaign, split=split, seed_run_tags=seed_tags)
     dest = Path(summary['directory'])
     def read(filename):
         with (dest / filename).open(encoding='utf-8-sig') as stream:
             return list(csv.DictReader(stream))
-    assert len(read('per_seed.csv')) == 12
+    per_seed = read('per_seed.csv')
+    assert len(per_seed) == 12
+    assert {(r['Model'], int(r['Seed']), r['RunTag']) for r in per_seed} == {
+        (model, seed, seed_tags.get(seed, campaign.name)) for model in CORE for seed in SEEDS}
     paper = {r['Model']: r for r in read('paper.csv')}
     assert paper['T0']['Status'] == 'NOT RUN' and paper['T0']['Mixed AP (%)'] == ''
     assert paper['m_base']['Mixed AP (%)'] == '41.0000 ± 1.0000'
     assert paper['m_base']['Latency(ms)'] == ''
-    assert {float(r['DeltaAP_pp']) for r in read('paired_ap.csv')} == {3.0}
+    assert {(r['Arch'], r['Seed'], float(r['DeltaAP_pp'])) for r in read('paired_ap.csv')} == {
+        (arch, str(seed), 3.) for arch in ('m', 's') for seed in (*SEEDS, 'all')}
     assert all(r['TrainSeconds'] == '5' for r in read('training_cost.csv'))
     teacher_result = tmp_path / 'teacher_metrics.json'
     save(teacher_result, dict(checkpoint_sha256='a'*64, teacher_id='a'*64 + '/ema.module',
-                              split='val', annotation_sha256='b'*64, epoch=3,
+                              split=split, annotation_sha256='b'*64, epoch=3,
                               metrics={k: 45 for k in AP_COLUMNS}))
-    summarize_runs(campaign, teacher_result=teacher_result, split='val')
+    summarize_runs(campaign, teacher_result=teacher_result, split=split, seed_run_tags=seed_tags)
     teacher = next(r for r in read('paper.csv') if r['Model'] == 'T0')
     assert teacher['Status'] == 'FIXED CHECKPOINT' and float(teacher['Mixed AP (%)']) == 45
+
+
+@pytest.mark.parametrize(('file', 'key', 'wrong_value'), [
+    ('run_info.json', 'seed', 3407),
+    ('run_info.json', 'run_tag', 'unexpected'),
+    ('selection.json', 'run_tag', 'study01'),
+])
+def test_summary_copied_runs_require_matching_metadata(tmp_path, file, key, wrong_value):
+    campaign = tmp_path / 'feature_kd_ms_v1' / 'study01'
+    run = campaign / 'm_base' / 'seed_0'
+    identity = dict(protocol_id=campaign.parent.name, run_tag='study11', experiment='m_base',
+                    seed=0, teacher=None)
+    records = {'run_info.json': dict(identity, arch='m'), 'selection.json': dict(identity, epoch=3)}
+    records[file][key] = wrong_value
+    for name, record in records.items():
+        save(run / name, record)
+    with pytest.raises(ValueError):
+        summarize_runs(campaign, split='test', seed_run_tags={0: 'study11', 3407: 'study11'})
 
 
 @pytest.mark.parametrize("arch", ["m", "s"])

@@ -75,13 +75,14 @@ def _bind_efficiency(row, bench, signatures):
                 'FPS': 1000 / bench['latency_ms'], 'FLOPs coverage': coverage})
 
 
-def summarize_runs(tag_dir, *, teacher_result=None, split='test'):
+def summarize_runs(tag_dir, *, teacher_result=None, split='test', seed_run_tags=None):
     if split not in ('val', 'test'):
         raise ValueError('Summary split must be val or test')
     tag_dir = Path(tag_dir)
     if not tag_dir.is_dir():
         raise FileNotFoundError(tag_dir)
     inspect_tree(tag_dir)
+    seed_run_tags = seed_run_tags or {}
     rows, costs, paired = [], [], []
     teachers, signatures, data_fingerprints = set(), set(), set()
     geometry = {}
@@ -92,13 +93,17 @@ def summarize_runs(tag_dir, *, teacher_result=None, split='test'):
         if info.get('smoke'):
             continue
         if ((model, f'seed_{seed}') != (run.parent.name, run.name)
-                or info['run_tag'] != tag_dir.name or info['protocol_id'] != tag_dir.parent.name):
+                or info['protocol_id'] != tag_dir.parent.name):
             raise ValueError(f'Inconsistent run identity {path}')
+        expected_tag = seed_run_tags.get(seed, tag_dir.name)
+        if info['run_tag'] != expected_tag:
+            raise ValueError(f'Inconsistent run identity {path}: '
+                             f'expected run_tag={expected_tag!r}, recorded {info["run_tag"]!r}')
         tid = _teacher_id(info['teacher'])
         if tid:
             teachers.add(tid)
         row = dict(Model=model, Seed=seed, TeacherID=tid, ProtocolID=info['protocol_id'],
-                   RunTag=tag_dir.name, Split=split, Status='NOT RUN')
+                   RunTag=info['run_tag'], Split=split, Status='NOT RUN')
         selection_path = run / 'selection.json'
         selection = _read(selection_path) if selection_path.is_file() else None
         if selection:

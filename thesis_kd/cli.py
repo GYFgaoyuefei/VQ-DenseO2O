@@ -18,6 +18,14 @@ SENSITIVITY = ("m_kd_lambda_025", "m_kd_lambda_050", "m_kd_lambda_200")
 NAMES = CORE + SCALES + SENSITIVITY
 
 
+def seed_run_tag(value):
+    seed, _, tag = value.partition("=")
+    try:
+        return int(seed), segment(tag)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Expected SEED=TAG, for example 0=study11") from exc
+
+
 def parser():
     main = argparse.ArgumentParser(description=__doc__)
     commands = main.add_subparsers(dest="action", required=True)
@@ -37,6 +45,8 @@ def parser():
         if name == "summarize":
             p.add_argument("--teacher-result", type=Path)
             p.add_argument("--split", choices=("val", "test"), default="test")
+            p.add_argument("--seed-run-tag", action="append", type=seed_run_tag, default=[],
+                           metavar="SEED=TAG", help="Original training tag for a seed copied into this run directory")
             continue
         p.add_argument("--experiment", choices=NAMES)
         p.add_argument("--seed", type=int, default=None)
@@ -183,7 +193,11 @@ def dispatch(args):
         if not tag_dir.is_dir():
             raise FileNotFoundError(tag_dir)
         inspect_tree(tag_dir)
-        return summarize_runs(tag_dir, teacher_result=args.teacher_result, split=args.split)
+        tags = dict(args.seed_run_tag)
+        if len(tags) != len(args.seed_run_tag):
+            raise ValueError("Specify --seed-run-tag only once per seed")
+        return summarize_runs(tag_dir, teacher_result=args.teacher_result, split=args.split,
+                              seed_run_tags=tags)
     cfg, run = locate(args)
     if action == "resolve-config":
         return yaml.safe_dump({"resolved": cfg, "base_kd_difference": pair_diff(cfg)},
