@@ -13,7 +13,7 @@ from .data import build_frozen_test_loader, build_val_loader
 from .factories import build_student, component, sha256_file
 
 
-def selected_weights(cfg, run_dir):
+def selected_weights(cfg, run_dir, *, final_validation=False):
     run_dir = Path(run_dir)
     selection = json.loads((run_dir / 'selection.json').read_text(encoding='utf8'))
     info = json.loads((run_dir / 'run_info.json').read_text(encoding='utf8'))
@@ -31,6 +31,18 @@ def selected_weights(cfg, run_dir):
         raise ValueError('Run does not bind this student to FP32 EMA Mixed Validation selection')
     with (run_dir / 'validation_history.csv').open(encoding='utf8') as stream:
         history = [(float(row['AP']), int(row['epoch'])) for row in csv.DictReader(stream)]
+    if final_validation:
+        epochs = cfg['native']['epoches']
+        if [epoch for _, epoch in history] != list(range(1, epochs + 1)):
+            raise ValueError(f'Study02 Validation requires a complete, ordered history for epochs 1 through {epochs}')
+        if (info.get('smoke') is not False or run_dir.name != f"seed_{info['seed']}"
+                or run_dir.parent.name != info['experiment']
+                or run_dir.parent.parent.name != info['run_tag']):
+            raise ValueError('Study02 run identity differs from its formal run directory')
+        from .objective_inputs import TEACHER_CONFIG_SHA256, TEACHER_ID
+        teacher = info.get('teacher') or {}
+        if teacher.get('id') != TEACHER_ID or teacher.get('config_digest') != TEACHER_CONFIG_SHA256:
+            raise ValueError('Study02 Validation requires the training run bound to the study01 teacher')
     if not history or any(not 0 <= ap <= 1 for ap, _ in history):
         raise ValueError('Invalid Validation AP history')
     best = max(history, key=lambda record: (record[0], -record[1]))
@@ -107,6 +119,32 @@ def freeze_selection(run_dir, selection):
         write_json(marker, selection)
 
 
+def validation_class_ap(coco, predictions):
+    """Mixed Validation COCO bbox AP by maturity class (all sizes, maxDets=100)."""
+    from faster_coco_eval import COCO, COCOeval_faster
+
+    gt = deepcopy(coco)
+    if predictions:
+        detections = gt.loadRes(deepcopy(predictions))
+    else:
+        detections = COCO()
+        detections.dataset = dict(images=gt.dataset['images'], categories=gt.dataset['categories'],
+                                  annotations=[])
+        detections.createIndex()
+    evaluator = COCOeval_faster(gt, detections, iouType='bbox')
+    evaluator.params.catIds = sorted(gt.getCatIds())
+    evaluator.evaluate()
+    evaluator.accumulate()
+    params = evaluator.params
+    precision = evaluator.eval['precision'][:, :, :, params.areaRngLbl.index('all'), params.maxDets.index(100)]
+    result = {}
+    for index, cat_id in enumerate(params.catIds):
+        values = precision[:, :, index]
+        valid = values[values >= 0]
+        result[gt.cats[cat_id]['name']] = float(valid.mean()) * 100 if valid.size else None
+    return result
+
+
 def evaluate_run(cfg, run_dir, device, *, split='val', confirm_frozen=False, illumination_map=None):
     if split not in ('val', 'test') or (split == 'test' and not confirm_frozen):
         raise ValueError('Select val, or test with explicit --confirm-frozen')
@@ -119,7 +157,11 @@ def evaluate_run(cfg, run_dir, device, *, split='val', confirm_frozen=False, ill
     target = run_dir / f'evaluation_{split}' / 'metrics.json'
     if target.parent.exists() or target.parent.is_symlink():
         raise FileExistsError(f'Result directory already exists: {target.parent}')
-    path, selection, info = selected_weights(cfg, run_dir)
+    study02_val = cfg['protocol_id'] == 'feature_kd_objective_v1' and split == 'val'
+    path, selection, info = selected_weights(cfg, run_dir, final_validation=study02_val)
+    if study02_val:
+        from .objective_inputs import verify_annotation
+        verify_annotation('val', cfg['native']['val_dataloader']['dataset']['ann_file'])
     model = load_deployed_student(cfg, path, device)
     if split == 'test':
         freeze_selection(run_dir, selection)
@@ -130,6 +172,8 @@ def evaluate_run(cfg, run_dir, device, *, split='val', confirm_frozen=False, ill
         illumination_map = json.loads(Path(illumination_map).read_text(encoding='utf8'))
     coco, predictions = _infer(model, _postprocessor(cfg, device), loader, device)
     record = evaluate_predictions(coco, predictions, illumination_map)
+    if study02_val:
+        record['per_class_ap_percent'] = validation_class_ap(coco, predictions)
     map_digest = None if illumination_map is None else hashlib.sha256(
         json.dumps(illumination_map, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     record.update(split=split, selection=selection, frozen=bool(confirm_frozen),

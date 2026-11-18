@@ -76,6 +76,26 @@ def restore_training(state, signature, wrapper, ema, optimizer, scaler):
     scaler.load_state_dict(state["scaler"])
 
 
+def publish_training_snapshot(run_dir, epoch, snapshot_epochs):
+    """Copy a committed last_training under the run's exclusive writer lock."""
+    if epoch not in snapshot_epochs:
+        return
+    source = run_dir / "last_training.pth"
+    target = run_dir / f"epoch_{epoch:03d}_training.pth"
+    if target.exists():
+        if digest(target) != digest(source):
+            raise ValueError(f"Conflicting immutable training snapshot: {target}")
+        return
+    # A process exit before rename leaves at most a staging file. Resume repeats
+    # this copy from the committed epoch before it can save any later epoch.
+    staging = target.with_suffix(".pth.tmp")
+    try:
+        shutil.copyfile(source, staging)
+        os.replace(staging, target)
+    finally:
+        staging.unlink(missing_ok=True)
+
+
 def publish_epoch(run_dir, selection, history, diagnostics, recover=False):
     # last_training is committed first. A crash between this commit and rename is recoverable.
     pending = run_dir / "best_pending.pth"

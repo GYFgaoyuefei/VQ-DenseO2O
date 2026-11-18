@@ -1,0 +1,8 @@
+arch: m
+protocol_id: feature_kd_objective_v1
+seeds: [42]
+snapshot_epochs: [5, 20, 60, 120]
+kd:
+  enabled: true
+  objective: mse
+  lambda_kd: 5.0

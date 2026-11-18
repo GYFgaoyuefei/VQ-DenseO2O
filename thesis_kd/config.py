@@ -134,12 +134,21 @@ def pair_diff(cfg):
     counterpart = cfg['arch'] + ('_kd' if cfg['experiment'].endswith('_base') else '_base')
     other = _compose(counterpart, cfg['resources'], {})
     excluded = {'experiment', 'resources', 'sources', 'kd'}
+    metadata = {}
+    if cfg['protocol_id'] == 'feature_kd_objective_v1':
+        # Training conditions must match the archived baseline even across protocols.
+        for key in ('protocol_id', 'seeds', 'snapshot_epochs'):
+            metadata[key] = [cfg.get(key), other.get(key)]
+        excluded.update(metadata)
     differences = [key for key in (cfg.keys() | other.keys()) - excluded
                    if cfg.get(key) != other.get(key)]
-    return {'compared': [cfg['experiment'], other['experiment']],
-            'non_kd_differences': sorted(differences),
-            'kd_differences': {k: [cfg['kd'][k], other['kd'][k]] for k in cfg['kd']
-                               if cfg['kd'][k] != other['kd'][k]}}
+    result = {'compared': [cfg['experiment'], other['experiment']],
+              'non_kd_differences': sorted(differences),
+              'kd_differences': {k: [v, other['kd'].get(k)] for k, v in cfg['kd'].items()
+                                 if v != other['kd'].get(k)}}
+    if metadata:
+        result['protocol_metadata_differences'] = metadata
+    return result
 
 
 def check_resources(cfg, *, resume=False):

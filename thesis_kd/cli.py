@@ -15,7 +15,8 @@ from .safeguards import (ROOT, inspect_tree, integrity, run_path, safe_output,
 CORE = ("m_base", "m_kd", "s_base", "s_kd")
 SCALES = ("m_kd_p3", "m_kd_p4", "m_kd_p5")
 SENSITIVITY = ("m_kd_lambda_025", "m_kd_lambda_050", "m_kd_lambda_200")
-NAMES = CORE + SCALES + SENSITIVITY
+OBJECTIVES = ("m_mse_l5", "m_cwd_l5_t1")
+NAMES = CORE + SCALES + SENSITIVITY + OBJECTIVES
 
 
 def seed_run_tag(value):
@@ -220,6 +221,9 @@ def dispatch(args):
             if cfg["kd"]["enabled"] and cfg["kd"]["lambda_kd"] != 0:
                 from .teacher import build_teacher
                 _, result["teacher"], _ = build_teacher(cfg)
+                if cfg["protocol_id"] == "feature_kd_objective_v1":
+                    from .objective_inputs import verify_study02_inputs
+                    result["input_identity"] = verify_study02_inputs(cfg, result["teacher"], resume=False)
             result["scope"] = "resources and checkpoint loading"
         return result
     if action in ("train", "resume", "smoke"):

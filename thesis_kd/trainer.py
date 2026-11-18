@@ -19,6 +19,9 @@ from .rng import capture_rng, isolated_rng, restore_rng, seed_all
 from .student_wrapper import StudentWrapper
 
 
+OBJECTIVE_PROTOCOL = "feature_kd_objective_v1"
+
+
 def optimizer_for(wrapper, config):
     """Apply native regexes to unprefixed names; also identify unnamed normalization layers."""
     lr, decay = config["lr"], config["weight_decay"]
@@ -78,6 +81,9 @@ def train_epoch(model, wrapper, teacher, criterion, ema, loader, optimizer, scal
     criterion.train()
     set_epoch(loader, epoch)
     native, kd = cfg["native"], cfg["kd"]
+    objective_protocol = cfg.get("protocol_id") == OBJECTIVE_PROTOCOL
+    if objective_protocol:
+        from .objective_losses import objective_loss
     steps = len(loader)
     totals = {}
     count = 0
@@ -103,7 +109,10 @@ def train_epoch(model, wrapper, teacher, criterion, ema, loader, optimizer, scal
             if teacher is not None:
                 with torch.no_grad():
                     reference = teacher(images.float())
-                mean, raw = feature_loss(projected, reference)
+                if objective_protocol:
+                    mean, raw = objective_loss(projected, reference, kd)
+                else:
+                    mean, raw = feature_loss(projected, reference)
                 weight = effective_lambda(kd["lambda_kd"], kd["warmup_epochs"], updates, steps)
                 del reference
             total = native_loss + weight * mean
@@ -158,9 +167,10 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
     if smoke and smoke_steps < 1:
         raise ValueError("smoke_steps must be positive")
     device, run_dir = torch.device(device), Path(run_dir)
-    if cfg["protocol_id"] == "feature_kd_ms_v1" and not smoke and (
+    objective_protocol = cfg["protocol_id"] == OBJECTIVE_PROTOCOL
+    if cfg["protocol_id"] in ("feature_kd_ms_v1", OBJECTIVE_PROTOCOL) and not smoke and (
             device.type != "cuda" or not cfg["native"]["use_amp"]):
-        raise ValueError("Formal feature_kd_ms_v1 training requires CUDA AMP; CPU is supported for smoke/fixtures")
+        raise ValueError(f"Formal {cfg['protocol_id']} training requires CUDA AMP; CPU is supported for smoke/fixtures")
     rank = dist.get_rank() if dist.is_initialized() else 0
     world = dist.get_world_size() if dist.is_initialized() else 1
     native = cfg["native"]
@@ -177,6 +187,9 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
         if kd_enabled(cfg):
             teacher, identity, teacher_native = build_teacher(cfg)
             teacher = teacher.to(device).eval().requires_grad_(False)
+        if objective_protocol:
+            from .objective_inputs import verify_study02_inputs
+            study02_inputs = verify_study02_inputs(cfg, identity, resume=resume)
         wrapper = StudentWrapper(student, cfg["kd"]["active_scales"] if teacher else (),
                                  teacher.channels if teacher else None).to(device)
     try:
@@ -207,6 +220,8 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
                      "stage_policy": cfg["stage_policy"], "selection": cfg["selection"], "tie_rule": cfg["tie_rule"],
                      "native_digest": hashlib.sha256(json.dumps(native, sort_keys=True,
                                                  default=str).encode("utf-8")).hexdigest()}
+        if objective_protocol:
+            signature["snapshot_epochs"] = cfg["snapshot_epochs"]
         epoch0 = updates = 0
         selection = None
         history, diagnostics = [], []
@@ -221,6 +236,8 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
             restore_rng(local["rng"])
             loader.generator.set_state(local["generator"])
             if rank == 0:
+                if objective_protocol:
+                    checkpoint.publish_training_snapshot(run_dir, epoch0, cfg["snapshot_epochs"])
                 checkpoint.publish_epoch(run_dir, selection, history, diagnostics, recover=True)
             del state
         elif rank == 0:
@@ -245,7 +262,7 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
                 validation_per_rank_batch=native["val_dataloader"]["total_batch_size"] // world,
                 validation_workers_per_rank=native["val_dataloader"]["num_workers"],
                 ddp_backend=dist.get_backend() if world > 1 else None,
-                stage_policy=cfg["stage_policy"]))
+                stage_policy=cfg["stage_policy"], **({"study02_inputs": study02_inputs} if objective_protocol else {})))
         for epoch in range(epoch0, min(1, epochs) if smoke else epochs):
             report, updates = train_epoch(model, wrapper, teacher, criterion, ema, loader, optimizer, scaler,
                                           scheduler, cfg, device, epoch, updates, smoke, world, smoke_steps)
@@ -277,6 +294,8 @@ def run_training(cfg, run_dir, seed, device="cuda", *, resume=False, smoke=False
                     updates=updates, signature=signature, rank_states=states, history=history,
                     diagnostics=diagnostics, selection=selection, cfg=cfg)
                 checkpoint.atomic_save(state, run_dir / "last_training.pth")
+                if objective_protocol:
+                    checkpoint.publish_training_snapshot(run_dir, epoch + 1, cfg["snapshot_epochs"])
                 checkpoint.publish_epoch(run_dir, selection, history, diagnostics)
             if world > 1:
                 dist.barrier()

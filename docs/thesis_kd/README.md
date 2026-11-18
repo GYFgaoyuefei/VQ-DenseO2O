@@ -9,6 +9,7 @@
 | 设置环境、生成命令、运行 smoke | [05 Windows](05_Windows操作指南.md) · [06 AutoDL](06_AutoDL部署与训练.md) |
 | 从中断恢复、导出、冻结 Test | [07 恢复和导出](07_恢复训练与学生导出.md) · [08 评价](08_验证测试与效率统计.md) |
 | 复核实测、论文表及限制 | [09 验收记录](09_正确性和回归测试报告.md) · [10 论文表](10_论文结果表与已知限制.md) |
+| 在 M/seed 42 比较 MSE λ=5 与 CWD λ=5 | [11 study02 训练、恢复、早期诊断与 Validation](11_study02_M蒸馏对照.md) |
 
 ```sh
 python -m thesis_kd.cli preflight --experiment m_base --static
